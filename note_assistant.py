@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import threading
 import json
 import shutil
@@ -55,6 +56,14 @@ class NoteAssistantApp:
         import_btn = tk.Button(top, text='Import', command=self.import_and_copy, bg=self.entry_bg, fg=self.fg)
         import_btn.pack(side='left', padx=(6, 0))
 
+        # Section filter dropdown
+        tk.Label(top, text='Section:', bg=self.bg, fg=self.fg).pack(side='left', padx=(8, 2))
+        self.section_var = tk.StringVar(value='All')
+        self.section_menu = tk.OptionMenu(top, self.section_var, 'All', command=self._on_section_change)
+        self.section_menu.config(bg=self.entry_bg, fg=self.fg, highlightthickness=0)
+        self.section_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
+        self.section_menu.pack(side='left')
+
         self.topmost_var = tk.BooleanVar(value=False)
         topmost_cb = tk.Checkbutton(top, text='Always on Top', variable=self.topmost_var, command=self.set_topmost, bg=self.bg, fg=self.fg, selectcolor=self.bg, activebackground=self.bg)
         topmost_cb.pack(side='left', padx=(8, 0))
@@ -85,6 +94,8 @@ class NoteAssistantApp:
         # Internal state
         self.current_search = ''
         self.last_found_index = None
+        self._full_text = ''
+        self._sections = {}  # name -> text content
 
         # Load config (geometry, last file, topmost)
         self.load_config()
@@ -149,6 +160,7 @@ class NoteAssistantApp:
             return
         self.text.delete('1.0', tk.END)
         self.text.insert('1.0', data)
+        self._parse_sections(data)
         self.status.config(text=f'Loaded: {path}')
         self.current_file = path
         self.clear_search()
@@ -227,6 +239,43 @@ class NoteAssistantApp:
         self.text.tag_remove('highlight', '1.0', tk.END)
         self.current_search = ''
         self.last_found_index = None
+
+    def _parse_sections(self, text):
+        """Parse markdown-style # headings into sections."""
+        self._full_text = text
+        self._sections = {}
+        # Find all lines starting with # (top-level headings)
+        pattern = re.compile(r'^(#+\s+.+)$', re.MULTILINE)
+        matches = list(pattern.finditer(text))
+        if not matches:
+            return
+        for i, m in enumerate(matches):
+            name = m.group(1).strip()
+            start = m.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            self._sections[name] = text[start:end].rstrip()
+        # Update the dropdown
+        menu = self.section_menu['menu']
+        menu.delete(0, 'end')
+        menu.add_command(label='All', command=lambda: self._set_section('All'))
+        for name in self._sections:
+            menu.add_command(label=name, command=lambda n=name: self._set_section(n))
+        self.section_var.set('All')
+
+    def _set_section(self, name):
+        self.section_var.set(name)
+        self._on_section_change(name)
+
+    def _on_section_change(self, value):
+        self.text.config(state='normal')
+        self.text.delete('1.0', tk.END)
+        if value == 'All':
+            self.text.insert('1.0', self._full_text)
+        else:
+            content = self._sections.get(value, '')
+            self.text.insert('1.0', content)
+        self.clear_search()
+        self.status.config(text=f'Section: {value}')
 
     def find_all(self):
         pattern = self.search_var.get().strip()
