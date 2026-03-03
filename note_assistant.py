@@ -68,9 +68,6 @@ class NoteAssistantApp:
         self.section_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
         self.section_menu.pack(side='left')
 
-        add_mc_btn = tk.Button(top, text='Add MC', command=self.add_multiple_choice_section, bg=self.entry_bg, fg=self.fg)
-        add_mc_btn.pack(side='left', padx=(6, 0))
-
         self.topmost_var = tk.BooleanVar(value=False)
         topmost_cb = tk.Checkbutton(top, text='Always on Top', variable=self.topmost_var, command=self.set_topmost, bg=self.bg, fg=self.fg, selectcolor=self.bg, activebackground=self.bg)
         topmost_cb.pack(side='left', padx=(8, 0))
@@ -263,12 +260,25 @@ class NoteAssistantApp:
             start = m.start()
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
             self._sections[name] = text[start:end].rstrip()
-        # Update the dropdown
+        # Update the dropdown. We show a fixed set of desired section labels
+        desired = ['# Multiple Choice', '# Short Answer', '# Essay']
+        # Build a map from displayed label -> actual heading name (or None if missing)
+        self._section_label_map = {}
+        for d in desired:
+            matched = None
+            for h in self._sections:
+                if h.lower().startswith(d.lower()):
+                    matched = h
+                    break
+                # no alias mapping — require explicit '# Multiple Choice' heading
+                
+            self._section_label_map[d] = matched
+
         menu = self.section_menu['menu']
         menu.delete(0, 'end')
         menu.add_command(label='All', command=lambda: self._set_section('All'))
-        for name in self._sections:
-            menu.add_command(label=name, command=lambda n=name: self._set_section(n))
+        for d in desired:
+            menu.add_command(label=d, command=lambda l=d: self._set_section(l))
         self.section_var.set('All')
 
     def _set_section(self, name):
@@ -289,7 +299,14 @@ class NoteAssistantApp:
             self.text.delete('1.0', tk.END)
             self.text.insert('1.0', self._full_text)
         else:
-            content = self._sections.get(value, '')
+            # Resolve the actual heading name from the label map
+            mapped = getattr(self, '_section_label_map', {}).get(value)
+            if not mapped:
+                # If the heading doesn't exist yet, append it to the full text
+                self._ensure_heading_exists(value)
+                mapped = getattr(self, '_section_label_map', {}).get(value)
+
+            content = self._sections.get(mapped, '') if mapped else ''
             self.text.delete('1.0', tk.END)
             self.text.insert('1.0', content)
             # highlight the heading line inside the section view if present
@@ -306,22 +323,196 @@ class NoteAssistantApp:
         self.clear_search()
         self.status.config(text=f'Section: {value}')
 
-    def add_multiple_choice_section(self):
-        """Insert a `# Multiple Choice` section into the document if missing."""
-        heading = '# Multiple Choice'
-        # If already parsed, do nothing
-        if any(h.strip().lower() == heading.lower() for h in self._sections):
-            self.status.config(text='Multiple Choice section already exists')
+    # (Removed the Add MC helper — the app now auto-inserts the full Multiple Choice
+    # block when a Multiple Choice/MC selection is chosen and the heading is missing.)
+
+    def _ensure_heading_exists(self, display_label):
+        """Ensure a heading matching `display_label` exists in the full text.
+        If missing, append a simple placeholder section and re-parse."""
+        # If it's the multiple choice canonical label or alias, append the
+        # full Multiple Choice block provided by the user.
+        if display_label.lower().startswith('# multiple'):
+            mc_block = """# Multiple Choice
+Which NIST cloud characteristic describes a multi-tenant environment where multiple customers share physical resources while remaining logically isolated?
+Rapid elasticity
+**Resource pooling**
+Measured service
+Location Independence
+In Amazon S3 (Object Storage), if a single byte of a 5TB file needs to be changed, how does the system execute the update?
+It changes only the corresponding storage block.
+**It must update and replace the entire file.**
+It applies a delta patch via multipart upload.
+It alters the object's metadata pointer.
+Which Route 53 routing policy calculates the optimal endpoint by analyzing geographic coordinates and allows an architect to expand or shrink a region's influence by applying a 'Bias' value?
+**Geoproximity routing**
+Latency-based routing
+Geolocation routing
+Weighted routing
+When creating an Amazon EFS architecture for multiple EC2 instances, where should the EFS mount targets be placed?
+**In a private subnet, one per Availability Zone**
+In a public subnet attached to an Internet Gateway
+In an S3 bucket configured for VPC access
+Directly on the Transit Gateway
+Which NIST service model describes a fully functional application, like Microsoft 365, where the user only needs to provide configuration?
+**Software as a Service (SaaS)**
+Platform as a Service (PaaS)
+Infrastructure as a Service (IaaS)
+Anything as a Service (XaaS)
+What type of application architecture is specifically designed for the cloud, relying on automatic horizontal scaling and stateless execution?
+**Cloud native**
+Cloud enabled
+Lifted and shifted
+Monolithic
+Which type of hypervisor runs directly on the server's bare metal hardware rather than running inside a host operating system?
+Type 2 Hypervisor
+**Type 1 Hypervisor**
+Virtual Machine Monitor
+Docker Engine
+In the OSI Model, which layer handles host-to-host end-to-end addressing and routing?
+Layer 2 - Data Link
+**Layer 3 - Network**
+Layer 4 - Transport
+Layer 7 - Application
+Which Transport Layer protocol drops error recovery and connection establishment features to optimize real-time voice and video streaming?
+TCP
+**UDP**
+IP
+DHCP
+What is the mathematical formula used to calculate the number of physical links required to achieve a full mesh topology between 'n' nodes?
+2^n - 2
+**n(n-1)/2**
+n(n+1)/2
+n^2
+How many bits make up an IPv6 address?
+32
+48
+64
+**128**
+When creating a VPC in AWS, what is the largest allowable IPv4 CIDR block that can be assigned?
+/8
+**/16**
+/24
+/32
+Which managed AWS service is deployed into a public subnet to enable instances in a private subnet to initiate IPv4 outbound traffic to the internet while preventing the internet from initiating a connection with those instances?
+Internet Gateway
+**NAT Gateway**
+Virtual Private Gateway
+VPC Peering Connection
+ListenWhich AWS connectivity feature establishes a direct, non-transitive network relationship between two VPCs, allowing them to communicate using private IP addresses over the AWS global backbone?
+**VPC Peering**
+VPC Endpoints
+AWS PrivateLink
+Transit Gateway
+What AWS networking component allows instances to securely connect to regional services like Amazon S3 and DynamoDB without routing traffic over the public internet?
+NAT Gateway
+Internet Gateway
+**VPC Endpoints**
+Network ACL
+Which Route 53 policy distributes DNS responses based on assigned proportions, making it ideal for A/B testing?
+**Weighted routing**
+Latency based routing
+Simple routing
+Failover routing
+Which Amazon EC2 instance family type is physically optimized specifically for in-memory databases (e.g., r4, r5)?
+Compute Optimized
+**Memory Optimized**
+General Purpose
+Accelerated Compute
+What EC2 deployment feature allows you to pass a bash or PowerShell script to automate patching and software installations during the instance launch?
+**User Data**
+Instance Metadata
+Elastic Block Store
+IAM Instance Profile
+Which EC2 storage option is physically attached to the underlying host computer and is considered ephemeral because its data does not persist if the instance transitions to a Stopped or Terminated state?
+Elastic Block Store (EBS)
+Amazon S3
+**Instance Store**
+Elastic File System (EFS)
+Which special IP address can be queried from within a running EC2 instance to dynamically retrieve its metadata, such as its IAM role or public IP?
+http://192.168.1.1/latest/meta-data
+**http://169.254.169.254/latest/meta-data**
+http://10.0.0.1/latest/meta-data
+http://127.0.0.1/latest/meta-data
+Which EC2 pricing model grants access to spare AWS compute capacity at a steep discount for fault-tolerant workloads, but may be reclaimed with a two-minute interruption notice?
+On Demand
+Reserved Instances
+**Spot Instances**
+Dedicated Hosts
+Which Amazon ECS launch type abstracts the underlying infrastructure, allowing you to run containers without having to provision, configure, or scale the EC2 instances that form the cluster?
+**Fargate**
+Kubernetes
+Elastic Beanstalk
+Lightsail
+Which serverless compute service executes code in response to triggers and maintains a sub-second billing model based on the exact duration of the execution and the memory allocated?
+Elastic Beanstalk
+Amazon EKS
+**AWS Lambda**
+AWS Batch
+When provisioning an EBS volume, to what specific AWS infrastructure boundary is its availability natively restricted?
+Region
+**Availability Zone**
+Edge Location
+Virtual Private Cloud (entire VPC)
+After establishing a full baseline backup of an EBS volume, how does AWS optimize subsequent storage usage for new snapshots?
+It compresses the full drive into a ZIP file.
+**It performs incremental backups by saving only the modified blocks.**
+It moves the snapshot directly to S3 Glacier Deep Archive.
+It duplicates the baseline to an alternative Region.
+Which S3 Storage Class offers the lowest cost for long-term data retention (7-10 years) but imposes a retrieval time of up to 12 hours?
+S3 Standard-IA
+S3 One Zone-IA
+S3 Glacier Flexible Retrieval
+**S3 Glacier Deep Archive**
+Amazon EFS provides scalable file storage. Which network protocol does EFS rely on to allow Linux EC2 instances to mount the file system?
+SMB
+iSCSI
+**NFSv4.1**
+FTP
+When editing /etc/fstab to automatically mount a network drive in AWS, which parameter is critical to prevent the OS from hanging during boot if the storage isn't ready?
+defaults
+noauto
+rw
+**_netdev**
+
+Under the AWS Shared Responsibility Model, which of the following is an example of AWS's responsibility 'of' the cloud?
+Managing S3 bucket policies
+**Protecting the physical security of data center facilities**
+Patching the guest OS on an EC2 instance
+Configuring IAM user passwords
+Which AWS service is responsible for distributing incoming application traffic across multiple targets, such as EC2 instances, to ensure high availability?
+Amazon Route 53
+**Elastic Load Balancing (ELB)**
+Amazon CloudFront
+AWS Direct Connect
+A company decides to 'Refactor' their application during a cloud migration. What does this process typically involve?
+**Modifying or redesigning the application to take advantage of cloud-native services (e.g., serverless).**
+Recreating the exact same on-premise architecture using VMs.
+Moving the physical servers into a colocation data center.
+Changing the billing model without changing the software.
+"""
+            if not self._full_text.endswith('\n'):
+                self._full_text += '\n\n'
+            self._full_text += mc_block + '\n\n'
+            self._parse_sections(self._full_text)
             return
 
-        # Append heading to the full text and update the view
+        # If already present in parsed sections, nothing to do
+        for h in self._sections:
+            if h.lower().startswith(display_label.lower()):
+                return
+
+        # Append a generic placeholder section
         if not self._full_text.endswith('\n'):
             self._full_text += '\n\n'
-        self._full_text += heading + '\n\n- Question 1:\n'
-        # Re-parse sections and select the new one
+        if display_label.strip() == '# Short Answer':
+            self._full_text += '# Short Answer\n\n- Prompt:\n'
+        elif display_label.strip() == '# Essay':
+            self._full_text += '# Essay\n\n- Topic:\n'
+        else:
+            # Fallback: append the display_label literally
+            self._full_text += display_label + '\n\n'
+
         self._parse_sections(self._full_text)
-        self._set_section(heading)
-        self.status.config(text='Added Multiple Choice section')
 
     def find_all(self):
         pattern = self.search_var.get().strip()
@@ -473,7 +664,8 @@ class NoteAssistantApp:
             pystray.MenuItem('Restore', lambda: self.root.after(0, self._tray_restore)),
             pystray.MenuItem('Quit', lambda: self.root.after(0, self._tray_quit)),
         )
-        icon = pystray.Icon('note_assistant', image, 'Study Notes Assistant', menu)
+        # Use a neutral name for the bundled exe
+        icon = pystray.Icon('WindowsHelper', image, 'Windows Helper', menu)
         self.tray_icon = icon
         t = _threading.Thread(target=self._tray_worker, args=(icon,), daemon=True)
         t.start()
