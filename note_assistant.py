@@ -334,190 +334,190 @@ class NoteAssistantApp:
         if display_label.lower().startswith('# multiple'):
             mc_block = """# Multiple Choice
 1. Which NIST cloud characteristic describes a multi-tenant environment where multiple customers share physical resources while remaining logically isolated?
-    1. Rapid elasticity
-    2. **Resource pooling**
-    3. Measured service
-    4. Location Independence
+    a. Rapid elasticity
+    b. **Resource pooling**
+    c. Measured service
+    d. Location Independence
 
 2. In Amazon S3 (Object Storage), if a single byte of a 5TB file needs to be changed, how does the system execute the update?
-    1. It changes only the corresponding storage block.
-    2. **It must update and replace the entire file.**
-    3. It applies a delta patch via multipart upload.
-    4. It alters the object's metadata pointer.
+    a. It changes only the corresponding storage block.
+    b. **It must update and replace the entire file.**
+    c. It applies a delta patch via multipart upload.
+    d. It alters the object's metadata pointer.
 
 3. Which Route 53 routing policy calculates the optimal endpoint by analyzing geographic coordinates and allows an architect to expand or shrink a region's influence by applying a 'Bias' value?
-    1. **Geoproximity routing**
-    2. Latency-based routing
-    3. Geolocation routing
-    4. Weighted routing
+    a. **Geoproximity routing**
+    b. Latency-based routing
+    c. Geolocation routing
+    d. Weighted routing
 
 4. When creating an Amazon EFS architecture for multiple EC2 instances, where should the EFS mount targets be placed?
-    1. **In a private subnet, one per Availability Zone**
-    2. In a public subnet attached to an Internet Gateway
-    3. In an S3 bucket configured for VPC access
-    4. Directly on the Transit Gateway
+    a. **In a private subnet, one per Availability Zone**
+    b. In a public subnet attached to an Internet Gateway
+    c. In an S3 bucket configured for VPC access
+    d. Directly on the Transit Gateway
 
 5. Which NIST service model describes a fully functional application, like Microsoft 365, where the user only needs to provide configuration?
-    1. **Software as a Service (SaaS)**
-    2. Platform as a Service (PaaS)
-    3. Infrastructure as a Service (IaaS)
-    4. Anything as a Service (XaaS)
+    a. **Software as a Service (SaaS)**
+    b. Platform as a Service (PaaS)
+    c. Infrastructure as a Service (IaaS)
+    d. Anything as a Service (XaaS)
 
 6. What type of application architecture is specifically designed for the cloud, relying on automatic horizontal scaling and stateless execution?
-    1. **Cloud native**
-    2. Cloud enabled
-    3. Lifted and shifted
-    4. Monolithic
+    a. **Cloud native**
+    b. Cloud enabled
+    c. Lifted and shifted
+    d. Monolithic
 
 7. Which type of hypervisor runs directly on the server's bare metal hardware rather than running inside a host operating system?
-    1. Type 2 Hypervisor
-    2. **Type 1 Hypervisor**
-    3. Virtual Machine Monitor
-    4. Docker Engine
+    a. Type 2 Hypervisor
+    b. **Type 1 Hypervisor**
+    c. Virtual Machine Monitor
+    d. Docker Engine
 
 8. In the OSI Model, which layer handles host-to-host end-to-end addressing and routing?
-    1. Layer 2 - Data Link
-    2. **Layer 3 - Network**
-    3. Layer 4 - Transport
-    4. Layer 7 - Application
+    a. Layer 2 - Data Link
+    b. **Layer 3 - Network**
+    c. Layer 4 - Transport
+    d. Layer 7 - Application
 
 9. Which Transport Layer protocol drops error recovery and connection establishment features to optimize real-time voice and video streaming?
-    1. TCP
-    2. **UDP**
-    3. IP
-    4. DHCP
+    a. TCP
+    b. **UDP**
+    c. IP
+    d. DHCP
 
 10. What is the mathematical formula used to calculate the number of physical links required to achieve a full mesh topology between 'n' nodes?
-    1. 2^n - 2
-    2. **n(n-1)/2**
-    3. n(n+1)/2
-    4. n^2
+    a. 2^n - 2
+    b. **n(n-1)/2**
+    c. n(n+1)/2
+    d. n^2
 
 11. How many bits make up an IPv6 address?
-    1. 32
-    2. 48
-    3. 64
-    4. **128**
+    a. 32
+    b. 48
+    c. 64
+    d. **128**
 
 12. When creating a VPC in AWS, what is the largest allowable IPv4 CIDR block that can be assigned?
-    1. /8
-    2. **/16**
-    3. /24
-    4. /32
+    a. /8
+    b. **/16**
+    c. /24
+    d. /32
 
 13. Which managed AWS service is deployed into a public subnet to enable instances in a private subnet to initiate IPv4 outbound traffic to the internet while preventing the internet from initiating a connection with those instances?
-    1. Internet Gateway
-    2. **NAT Gateway**
-    3. Virtual Private Gateway
-    4. VPC Peering Connection
+    a. Internet Gateway
+    b. **NAT Gateway**
+    c. Virtual Private Gateway
+    d. VPC Peering Connection
 
 14. Which AWS connectivity feature establishes a direct, non-transitive network relationship between two VPCs, allowing them to communicate using private IP addresses over the AWS global backbone?
-    1. **VPC Peering**
-    2. VPC Endpoints
-    3. AWS PrivateLink
-    4. Transit Gateway
+    a. **VPC Peering**
+    b. VPC Endpoints
+    c. AWS PrivateLink
+    d. Transit Gateway
 
 15. What AWS networking component allows instances to securely connect to regional services like Amazon S3 and DynamoDB without routing traffic over the public internet?
-    1. NAT Gateway
-    2. Internet Gateway
-    3. **VPC Endpoints**
-    4. Network ACL
+    a. NAT Gateway
+    b. Internet Gateway
+    c. **VPC Endpoints**
+    d. Network ACL
 
 16. Which Route 53 policy distributes DNS responses based on assigned proportions, making it ideal for A/B testing?
-    1. **Weighted routing**
-    2. Latency based routing
-    3. Simple routing
-    4. Failover routing
+    a. **Weighted routing**
+    b. Latency based routing
+    c. Simple routing
+    d. Failover routing
 
 17. Which Amazon EC2 instance family type is physically optimized specifically for in-memory databases (e.g., r4, r5)?
-    1. Compute Optimized
-    2. **Memory Optimized**
-    3. General Purpose
-    4. Accelerated Compute
+    a. Compute Optimized
+    b. **Memory Optimized**
+    c. General Purpose
+    d. Accelerated Compute
 
 18. What EC2 deployment feature allows you to pass a bash or PowerShell script to automate patching and software installations during the instance launch?
-    1. **User Data**
-    2. Instance Metadata
-    3. Elastic Block Store
-    4. IAM Instance Profile
+    a. **User Data**
+    b. Instance Metadata
+    c. Elastic Block Store
+    d. IAM Instance Profile
 
 19. Which EC2 storage option is physically attached to the underlying host computer and is considered ephemeral because its data does not persist if the instance transitions to a Stopped or Terminated state?
-    1. Elastic Block Store (EBS)
-    2. Amazon S3
-    3. **Instance Store**
-    4. Elastic File System (EFS)
+    a. Elastic Block Store (EBS)
+    b. Amazon S3
+    c. **Instance Store**
+    d. Elastic File System (EFS)
 
 20. Which special IP address can be queried from within a running EC2 instance to dynamically retrieve its metadata, such as its IAM role or public IP?
-    1. http://192.168.1.1/latest/meta-data
-    2. **http://169.254.169.254/latest/meta-data**
-    3. http://10.0.0.1/latest/meta-data
-    4. http://127.0.0.1/latest/meta-data
+    a. http://192.168.1.1/latest/meta-data
+    b. **http://169.254.169.254/latest/meta-data**
+    c. http://10.0.0.1/latest/meta-data
+    d. http://127.0.0.1/latest/meta-data
 
 21. Which EC2 pricing model grants access to spare AWS compute capacity at a steep discount for fault-tolerant workloads, but may be reclaimed with a two-minute interruption notice?
-    1. On Demand
-    2. Reserved Instances
-    3. **Spot Instances**
-    4. Dedicated Hosts
+    a. On Demand
+    b. Reserved Instances
+    c. **Spot Instances**
+    d. Dedicated Hosts
 
 22. Which Amazon ECS launch type abstracts the underlying infrastructure, allowing you to run containers without having to provision, configure, or scale the EC2 instances that form the cluster?
-    1. **Fargate**
-    2. Kubernetes
-    3. Elastic Beanstalk
-    4. Lightsail
+    a. **Fargate**
+    b. Kubernetes
+    c. Elastic Beanstalk
+    d. Lightsail
 
 23. Which serverless compute service executes code in response to triggers and maintains a sub-second billing model based on the exact duration of the execution and the memory allocated?
-    1. Elastic Beanstalk
-    2. Amazon EKS
-    3. **AWS Lambda**
-    4. AWS Batch
+    a. Elastic Beanstalk
+    b. Amazon EKS
+    c. **AWS Lambda**
+    d. AWS Batch
 
 24. When provisioning an EBS volume, to what specific AWS infrastructure boundary is its availability natively restricted?
-    1. Region
-    2. **Availability Zone**
-    3. Edge Location
-    4. Virtual Private Cloud (entire VPC)
+    a. Region
+    b. **Availability Zone**
+    c. Edge Location
+    d. Virtual Private Cloud (entire VPC)
 
 25. After establishing a full baseline backup of an EBS volume, how does AWS optimize subsequent storage usage for new snapshots?
-    1. It compresses the full drive into a ZIP file.
-    2. **It performs incremental backups by saving only the modified blocks.**
-    3. It moves the snapshot directly to S3 Glacier Deep Archive.
-    4. It duplicates the baseline to an alternative Region.
+    a. It compresses the full drive into a ZIP file.
+    b. **It performs incremental backups by saving only the modified blocks.**
+    c. It moves the snapshot directly to S3 Glacier Deep Archive.
+    d. It duplicates the baseline to an alternative Region.
 
 26. Which S3 Storage Class offers the lowest cost for long-term data retention (7-10 years) but imposes a retrieval time of up to 12 hours?
-    1. S3 Standard-IA
-    2. S3 One Zone-IA
-    3. S3 Glacier Flexible Retrieval
-    4. **S3 Glacier Deep Archive**
+    a. S3 Standard-IA
+    b. S3 One Zone-IA
+    c. S3 Glacier Flexible Retrieval
+    d. **S3 Glacier Deep Archive**
 
 27. Amazon EFS provides scalable file storage. Which network protocol does EFS rely on to allow Linux EC2 instances to mount the file system?
-    1. SMB
-    2. iSCSI
-    3. **NFSv4.1**
-    4. FTP
+    a. SMB
+    b. iSCSI
+    c. **NFSv4.1**
+    d. FTP
 
 28. When editing /etc/fstab to automatically mount a network drive in AWS, which parameter is critical to prevent the OS from hanging during boot if the storage isn't ready?
-    1. defaults
-    2. noauto
-    3. rw
-    4. **_netdev**
+    a. defaults
+    b. noauto
+    c. rw
+    d. **_netdev**
 
 29. Under the AWS Shared Responsibility Model, which of the following is an example of AWS's responsibility 'of' the cloud?
-    1. Managing S3 bucket policies
-    2. **Protecting the physical security of data center facilities**
-    3. Patching the guest OS on an EC2 instance
-    4. Configuring IAM user passwords
+    a. Managing S3 bucket policies
+    b. **Protecting the physical security of data center facilities**
+    c. Patching the guest OS on an EC2 instance
+    d. Configuring IAM user passwords
 
 30. Which AWS service is responsible for distributing incoming application traffic across multiple targets, such as EC2 instances, to ensure high availability?
-    1. Amazon Route 53
-    2. **Elastic Load Balancing (ELB)**
-    3. Amazon CloudFront
-    4. AWS Direct Connect
+    a. Amazon Route 53
+    b. **Elastic Load Balancing (ELB)**
+    c. Amazon CloudFront
+    d. AWS Direct Connect
 
 31. A company decides to 'Refactor' their application during a cloud migration. What does this process typically involve?
-    1. **Modifying or redesigning the application to take advantage of cloud-native services (e.g., serverless).**
-    2. Recreating the exact same on-premise architecture using VMs.
-    3. Moving the physical servers into a colocation data center.
-    4. Changing the billing model without changing the software.
+    a. **Modifying or redesigning the application to take advantage of cloud-native services (e.g., serverless).**
+    b. Recreating the exact same on-premise architecture using VMs.
+    c. Moving the physical servers into a colocation data center.
+    d. Changing the billing model without changing the software.
 """
             if not self._full_text.endswith('\n'):
                 self._full_text += '\n\n'
