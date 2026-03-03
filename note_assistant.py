@@ -26,6 +26,10 @@ class NoteAssistantApp:
         self.visible = True
         self.config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'note_assistant_config.json')
 
+        # If bundled by PyInstaller, resources are unpacked to _MEIPASS at runtime.
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        self.config_path = os.path.join(base_dir, 'note_assistant_config.json')
+
         # Window size and appearance
         self.root.geometry('640x360')
         self.root.minsize(400, 200)
@@ -64,6 +68,9 @@ class NoteAssistantApp:
         self.section_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
         self.section_menu.pack(side='left')
 
+        add_mc_btn = tk.Button(top, text='Add MC', command=self.add_multiple_choice_section, bg=self.entry_bg, fg=self.fg)
+        add_mc_btn.pack(side='left', padx=(6, 0))
+
         self.topmost_var = tk.BooleanVar(value=False)
         topmost_cb = tk.Checkbutton(top, text='Always on Top', variable=self.topmost_var, command=self.set_topmost, bg=self.bg, fg=self.fg, selectcolor=self.bg, activebackground=self.bg)
         topmost_cb.pack(side='left', padx=(8, 0))
@@ -86,6 +93,8 @@ class NoteAssistantApp:
         self.text = scrolledtext.ScrolledText(self.root, wrap='word', bg='#121212', fg=self.fg, insertbackground=self.fg)
         self.text.pack(fill='both', expand=True, padx=8, pady=(0, 8))
         self.text.tag_config('highlight', background=self.highlight_bg)
+        # tag for showing the selected section heading
+        self.text.tag_config('section', background=self.highlight_bg)
 
         # Status bar
         self.status = tk.Label(self.root, text='', anchor='w', bg=self.bg, fg=self.fg)
@@ -267,15 +276,52 @@ class NoteAssistantApp:
         self._on_section_change(name)
 
     def _on_section_change(self, value):
+        # When a section (other than 'All') is chosen, show only that section's
+        # content (hiding the others). Selecting 'All' restores the full text.
         self.text.config(state='normal')
-        self.text.delete('1.0', tk.END)
+        # remove previous section highlight
+        try:
+            self.text.tag_remove('section', '1.0', tk.END)
+        except Exception:
+            pass
+
         if value == 'All':
+            self.text.delete('1.0', tk.END)
             self.text.insert('1.0', self._full_text)
         else:
             content = self._sections.get(value, '')
+            self.text.delete('1.0', tk.END)
             self.text.insert('1.0', content)
+            # highlight the heading line inside the section view if present
+            idx = self.text.search(r'^(#+\s+.+)$', '1.0', regexp=True, stopindex=tk.END)
+            if idx:
+                line_num = idx.split('.')[0]
+                line_start = f"{line_num}.0"
+                line_end = f"{line_num}.end"
+                self.text.tag_add('section', line_start, line_end)
+                self.text.mark_set(tk.INSERT, line_start)
+                self.text.see(line_start)
+
+        # clear any previous search highlights
         self.clear_search()
         self.status.config(text=f'Section: {value}')
+
+    def add_multiple_choice_section(self):
+        """Insert a `# Multiple Choice` section into the document if missing."""
+        heading = '# Multiple Choice'
+        # If already parsed, do nothing
+        if any(h.strip().lower() == heading.lower() for h in self._sections):
+            self.status.config(text='Multiple Choice section already exists')
+            return
+
+        # Append heading to the full text and update the view
+        if not self._full_text.endswith('\n'):
+            self._full_text += '\n\n'
+        self._full_text += heading + '\n\n- Question 1:\n'
+        # Re-parse sections and select the new one
+        self._parse_sections(self._full_text)
+        self._set_section(heading)
+        self.status.config(text='Added Multiple Choice section')
 
     def find_all(self):
         pattern = self.search_var.get().strip()
