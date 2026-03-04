@@ -13,116 +13,647 @@ try:
     TRAY_AVAILABLE = True
 except Exception:
     TRAY_AVAILABLE = False
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), '.env')
+    if os.path.exists(_env_path):
+        load_dotenv(_env_path)
+    else:
+        load_dotenv()
+except ImportError:
+    pass
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    ANTHROPIC_AVAILABLE = False
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from ctypes import wintypes
 
 
+# ---------------------------------------------------------------------------
+# Theme definitions
+# ---------------------------------------------------------------------------
+THEMES = {
+    'dark': {
+        'bg': '#1e1e1e',
+        'fg': '#dcdcdc',
+        'entry_bg': '#2b2b2b',
+        'text_bg': '#121212',
+        'highlight_bg': '#44475a',
+        'button_bg': '#333333',
+        'button_fg': '#dcdcdc',
+        'selectcolor': '#1e1e1e',
+        'accent': '#5865f2',
+        'border': '#3a3a3a',
+    },
+    'light': {
+        'bg': '#f5f5f5',
+        'fg': '#1a1a1a',
+        'entry_bg': '#ffffff',
+        'text_bg': '#ffffff',
+        'highlight_bg': '#fff176',
+        'button_bg': '#e0e0e0',
+        'button_fg': '#1a1a1a',
+        'selectcolor': '#f5f5f5',
+        'accent': '#4a6cf7',
+        'border': '#cccccc',
+    },
+    'transparent': {
+        'bg': '#010101',
+        'fg': '#000000',
+        'entry_bg': '#010101',
+        'text_bg': '#010101',
+        'highlight_bg': '#333333',
+        'button_bg': '#010101',
+        'button_fg': '#000000',
+        'selectcolor': '#010101',
+        'accent': '#010101',
+        'border': '#010101',
+    },
+}
+
+
 class NoteAssistantApp:
     def __init__(self, root, default_file='notes.txt'):
         self.root = root
-        self.root.title('Study Notes Assistant')
+        self.root.title('Service Host꞉ Windows Helper')
         self.default_file = default_file
         self.visible = True
         self.config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'note_assistant_config.json')
 
-        # If bundled by PyInstaller, resources are unpacked to _MEIPASS at runtime.
         base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
         self.config_path = os.path.join(base_dir, 'note_assistant_config.json')
 
+        # Claude API client
+        self.anthropic_client = None
+        api_key = os.environ.get('ANTHROPIC_API_KEY')
+        if ANTHROPIC_AVAILABLE and api_key:
+            try:
+                self.anthropic_client = anthropic.Anthropic(api_key=api_key)
+            except Exception as e:
+                print(f'Failed to init Claude client: {e}')
+
         # Window size and appearance
-        self.root.geometry('640x360')
-        self.root.minsize(400, 200)
-        self.bg = '#1e1e1e'
-        self.fg = '#dcdcdc'
-        self.entry_bg = '#2b2b2b'
-        self.highlight_bg = '#44475a'
+        self.root.geometry('800x500')
+        self.root.minsize(450, 300)
+
+        # Apply initial theme
+        self.current_theme = 'dark'
+        self._apply_theme_colors('dark')
         self.root.configure(bg=self.bg)
 
-        # Top frame with controls
-        top = tk.Frame(self.root, bg=self.bg)
-        top.pack(fill='x', padx=8, pady=6)
+        # ---------------------------------------------------------------
+        # Use grid for main layout — only text area expands vertically
+        # ---------------------------------------------------------------
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=0)  # toolbar row 1
+        self.root.rowconfigure(1, weight=0)  # toolbar row 2
+        self.root.rowconfigure(2, weight=3)  # main text area (gets most space)
+        self.root.rowconfigure(3, weight=0)  # chat panel (fixed height, not in grid until toggled)
+        self.root.rowconfigure(4, weight=0)  # status bar
+
+        # ---------------------------------------------------------------
+        # Row 0 — Search + File controls
+        # ---------------------------------------------------------------
+        row0 = tk.Frame(self.root, bg=self.bg)
+        row0.grid(row=0, column=0, sticky='ew', padx=8, pady=(6, 2))
+        row0.columnconfigure(0, weight=1)
+        self.top_frame = row0
 
         self.search_var = tk.StringVar()
-        self.search_entry = tk.Entry(top, textvariable=self.search_var, bg=self.entry_bg, fg=self.fg, insertbackground=self.fg)
-        self.search_entry.pack(side='left', fill='x', expand=True, padx=(0, 6))
+        self.search_entry = tk.Entry(row0, textvariable=self.search_var,
+                                     bg=self.entry_bg, fg=self.fg,
+                                     insertbackground=self.fg, relief='flat',
+                                     font=('Segoe UI', 10))
+        self.search_entry.grid(row=0, column=0, sticky='ew', padx=(0, 4))
         self.search_entry.bind('<Return>', lambda e: self.find_next())
 
-        find_btn = tk.Button(top, text='Find', command=self.find_all, bg=self.entry_bg, fg=self.fg)
-        find_btn.pack(side='left')
+        btn_frame = tk.Frame(row0, bg=self.bg)
+        btn_frame.grid(row=0, column=1, sticky='e')
 
-        next_btn = tk.Button(top, text='Next', command=self.find_next, bg=self.entry_bg, fg=self.fg)
-        next_btn.pack(side='left', padx=(4, 0))
+        self.find_btn = tk.Button(btn_frame, text='Find', command=self.find_all,
+                                  bg=self.button_bg, fg=self.button_fg,
+                                  relief='flat', padx=8, font=('Segoe UI', 9))
+        self.find_btn.pack(side='left', padx=1)
 
-        open_btn = tk.Button(top, text='Open', command=self.open_file, bg=self.entry_bg, fg=self.fg)
-        open_btn.pack(side='left', padx=(8, 0))
+        self.next_btn = tk.Button(btn_frame, text='Next', command=self.find_next,
+                                  bg=self.button_bg, fg=self.button_fg,
+                                  relief='flat', padx=8, font=('Segoe UI', 9))
+        self.next_btn.pack(side='left', padx=1)
 
-        import_btn = tk.Button(top, text='Import', command=self.import_and_copy, bg=self.entry_bg, fg=self.fg)
-        import_btn.pack(side='left', padx=(6, 0))
+        sep1 = tk.Frame(btn_frame, width=2, bg=self.border, height=20)
+        sep1.pack(side='left', padx=6, pady=2)
 
-        # Section filter dropdown
-        tk.Label(top, text='Section:', bg=self.bg, fg=self.fg).pack(side='left', padx=(8, 2))
+        self.open_btn = tk.Button(btn_frame, text='Open', command=self.open_file,
+                                  bg=self.button_bg, fg=self.button_fg,
+                                  relief='flat', padx=8, font=('Segoe UI', 9))
+        self.open_btn.pack(side='left', padx=1)
+
+        self.import_btn = tk.Button(btn_frame, text='Import', command=self.import_and_copy,
+                                    bg=self.button_bg, fg=self.button_fg,
+                                    relief='flat', padx=8, font=('Segoe UI', 9))
+        self.import_btn.pack(side='left', padx=1)
+
+        sep2 = tk.Frame(btn_frame, width=2, bg=self.border, height=20)
+        sep2.pack(side='left', padx=6, pady=2)
+
+        self.section_label = tk.Label(btn_frame, text='Section:', bg=self.bg, fg=self.fg,
+                                      font=('Segoe UI', 9))
+        self.section_label.pack(side='left')
         self.section_var = tk.StringVar(value='All')
-        self.section_menu = tk.OptionMenu(top, self.section_var, 'All', command=self._on_section_change)
-        self.section_menu.config(bg=self.entry_bg, fg=self.fg, highlightthickness=0)
-        self.section_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
-        self.section_menu.pack(side='left')
+        self.section_menu = tk.OptionMenu(btn_frame, self.section_var, 'All',
+                                          command=self._on_section_change)
+        self.section_menu.config(bg=self.entry_bg, fg=self.fg, highlightthickness=0,
+                                 relief='flat', font=('Segoe UI', 9))
+        self.section_menu['menu'].config(bg=self.entry_bg, fg=self.fg,
+                                         font=('Segoe UI', 9))
+        self.section_menu.pack(side='left', padx=(2, 0))
+
+        # ---------------------------------------------------------------
+        # Row 1 — Theme, Actions, Window controls
+        # ---------------------------------------------------------------
+        row1 = tk.Frame(self.root, bg=self.bg)
+        row1.grid(row=1, column=0, sticky='ew', padx=8, pady=(2, 4))
+        self.top2_frame = row1
+
+        # Left group: theme + actions
+        left_grp = tk.Frame(row1, bg=self.bg)
+        left_grp.pack(side='left')
+
+        self.theme_label = tk.Label(left_grp, text='Theme:', bg=self.bg, fg=self.fg,
+                                    font=('Segoe UI', 9))
+        self.theme_label.pack(side='left')
+        self.theme_var = tk.StringVar(value='dark')
+        self.theme_menu = tk.OptionMenu(left_grp, self.theme_var,
+                                        'dark', 'light', 'transparent',
+                                        command=self.apply_theme)
+        self.theme_menu.config(bg=self.entry_bg, fg=self.fg, highlightthickness=0,
+                               relief='flat', font=('Segoe UI', 9))
+        self.theme_menu['menu'].config(bg=self.entry_bg, fg=self.fg,
+                                       font=('Segoe UI', 9))
+        self.theme_menu.pack(side='left', padx=(2, 8))
+
+        self.format_btn = tk.Button(left_grp, text='Auto-Format',
+                                    command=self.auto_format_notes,
+                                    bg=self.button_bg, fg=self.button_fg,
+                                    relief='flat', padx=8, font=('Segoe UI', 9))
+        self.format_btn.pack(side='left', padx=1)
+
+        self.prompt_visible = False
+        self.toggle_prompt_btn = tk.Button(left_grp, text='Claude Chat',
+                                           command=self.toggle_prompt_panel,
+                                           bg=self.button_bg, fg=self.button_fg,
+                                           relief='flat', padx=8, font=('Segoe UI', 9))
+        self.toggle_prompt_btn.pack(side='left', padx=(4, 0))
+
+        # Right group: window controls (simplified)
+        right_grp = tk.Frame(row1, bg=self.bg)
+        right_grp.pack(side='right')
 
         self.topmost_var = tk.BooleanVar(value=False)
-        topmost_cb = tk.Checkbutton(top, text='Always on Top', variable=self.topmost_var, command=self.set_topmost, bg=self.bg, fg=self.fg, selectcolor=self.bg, activebackground=self.bg)
-        topmost_cb.pack(side='left', padx=(8, 0))
+        self.topmost_cb = tk.Checkbutton(right_grp, text='On Top',
+                                         variable=self.topmost_var,
+                                         command=self.set_topmost,
+                                         bg=self.bg, fg=self.fg,
+                                         selectcolor=self.selectcolor,
+                                         activebackground=self.bg,
+                                         font=('Segoe UI', 8))
+        self.topmost_cb.pack(side='left', padx=2)
 
-        # Option to hide from taskbar (Windows only)
-        self.hide_taskbar_var = tk.BooleanVar(value=False)
-        hide_cb = tk.Checkbutton(top, text='Hide from Taskbar', variable=self.hide_taskbar_var, command=self.apply_taskbar_setting, bg=self.bg, fg=self.fg, selectcolor=self.bg, activebackground=self.bg)
-        hide_cb.pack(side='left', padx=(8, 0))
-
-        # Minimize to tray option
         self.minimize_tray_var = tk.BooleanVar(value=False)
-        tray_cb = tk.Checkbutton(top, text='Minimize to Tray', variable=self.minimize_tray_var, bg=self.bg, fg=self.fg, selectcolor=self.bg, activebackground=self.bg)
-        tray_cb.pack(side='left', padx=(8, 0))
-        
-        # Stronger hide button (Windows only)
-        strong_btn = tk.Button(top, text='Apply Stronger Hide', command=self.apply_stronger_hide, bg=self.entry_bg, fg=self.fg)
-        strong_btn.pack(side='left', padx=(8, 0))
+        self.tray_cb = tk.Checkbutton(right_grp, text='Tray',
+                                      variable=self.minimize_tray_var,
+                                      bg=self.bg, fg=self.fg,
+                                      selectcolor=self.selectcolor,
+                                      activebackground=self.bg,
+                                      font=('Segoe UI', 8))
+        self.tray_cb.pack(side='left', padx=2)
 
-        # Text area for notes
-        self.text = scrolledtext.ScrolledText(self.root, wrap='word', bg='#121212', fg=self.fg, insertbackground=self.fg)
-        self.text.pack(fill='both', expand=True, padx=8, pady=(0, 8))
+        # Hide from taskbar
+        self.hide_taskbar_var = tk.BooleanVar(value=False)
+        self.hide_cb = tk.Checkbutton(right_grp, text='Hide Taskbar',
+                                      variable=self.hide_taskbar_var,
+                                      command=self.apply_hide_taskbar,
+                                      bg=self.bg, fg=self.fg,
+                                      selectcolor=self.selectcolor,
+                                      activebackground=self.bg,
+                                      font=('Segoe UI', 8))
+        self.hide_cb.pack(side='left', padx=2)
+
+        # No-focus (browser won't detect switch)
+        self.nofocus_var = tk.BooleanVar(value=False)
+        self.nofocus_cb = tk.Checkbutton(right_grp, text='No-Focus',
+                                         variable=self.nofocus_var,
+                                         command=self.apply_nofocus_mode,
+                                         bg=self.bg, fg=self.fg,
+                                         selectcolor=self.selectcolor,
+                                         activebackground=self.bg,
+                                         font=('Segoe UI', 8))
+        self.nofocus_cb.pack(side='left', padx=2)
+
+        # ---------------------------------------------------------------
+        # Row 2 — Main text area (expands to fill)
+        # ---------------------------------------------------------------
+        text_frame = tk.Frame(self.root, bg=self.bg)
+        text_frame.grid(row=2, column=0, sticky='nsew', padx=8, pady=(0, 2))
+        text_frame.columnconfigure(0, weight=1)
+        text_frame.rowconfigure(0, weight=1)
+
+        self.text = scrolledtext.ScrolledText(text_frame, wrap='word',
+                                              bg=self.text_bg, fg=self.fg,
+                                              insertbackground=self.fg,
+                                              relief='flat', borderwidth=0,
+                                              font=('Consolas', 10))
+        self.text.grid(row=0, column=0, sticky='nsew')
         self.text.tag_config('highlight', background=self.highlight_bg)
-        # tag for showing the selected section heading
         self.text.tag_config('section', background=self.highlight_bg)
 
-        # Status bar
-        self.status = tk.Label(self.root, text='', anchor='w', bg=self.bg, fg=self.fg)
-        self.status.pack(fill='x', padx=8, pady=(0, 6))
+        # ---------------------------------------------------------------
+        # Row 3 — Chat panel (hidden by default, fixed height)
+        # ---------------------------------------------------------------
+        self.prompt_frame = tk.Frame(self.root, bg=self.bg, height=200)
+        self.prompt_frame.grid_propagate(False)  # keep fixed height
+
+        # Chat input row
+        chat_input = tk.Frame(self.prompt_frame, bg=self.bg)
+        chat_input.pack(fill='x', pady=(4, 2))
+
+        self.prompt_label = tk.Label(chat_input, text='Ask Claude:',
+                                     bg=self.bg, fg=self.fg,
+                                     font=('Segoe UI', 9, 'bold'))
+        self.prompt_label.pack(side='left', padx=(0, 6))
+
+        self.send_btn = tk.Button(chat_input, text='Send', command=self.send_prompt,
+                                  bg=self.accent, fg='#ffffff',
+                                  relief='flat', padx=12, font=('Segoe UI', 9, 'bold'))
+        self.send_btn.pack(side='right')
+
+        self.prompt_var = tk.StringVar()
+        self.prompt_entry = tk.Entry(chat_input, textvariable=self.prompt_var,
+                                     bg=self.entry_bg, fg=self.fg,
+                                     insertbackground=self.fg, relief='flat',
+                                     font=('Segoe UI', 10))
+        self.prompt_entry.pack(side='left', fill='x', expand=True, padx=(0, 4))
+        self.prompt_entry.bind('<Return>', lambda e: self.send_prompt())
+
+        # Response area — fills the rest of the prompt_frame
+        self.response_text = scrolledtext.ScrolledText(self.prompt_frame, wrap='word',
+                                                       bg=self.text_bg, fg=self.fg,
+                                                       insertbackground=self.fg,
+                                                       relief='flat', borderwidth=0,
+                                                       font=('Consolas', 10))
+        self.response_text.pack(fill='both', expand=True, pady=(2, 0))
+        self.response_text.config(state='disabled')
+
+        # ---------------------------------------------------------------
+        # Row 4 — Status bar
+        # ---------------------------------------------------------------
+        self.status = tk.Label(self.root, text='', anchor='w', bg=self.bg, fg=self.fg,
+                               font=('Segoe UI', 8))
+        self.status.grid(row=4, column=0, sticky='ew', padx=8, pady=(0, 4))
+
+        # Show API status at startup
+        if self.anthropic_client:
+            self.status.config(text='Claude API ready')
+        elif ANTHROPIC_AVAILABLE:
+            self.status.config(text='Claude API: no API key found in .env')
+        else:
+            self.status.config(text='Claude API: anthropic package not installed')
+
+        # Widget collections for theme updates
+        self._all_buttons = [
+            self.find_btn, self.next_btn, self.open_btn, self.import_btn,
+            self.format_btn, self.toggle_prompt_btn,
+        ]
+        self._all_checkbuttons = [
+            self.topmost_cb, self.tray_cb, self.hide_cb, self.nofocus_cb,
+        ]
+        self._all_labels = [
+            self.section_label, self.theme_label, self.prompt_label, self.status,
+        ]
+        self._all_frames = [
+            self.top_frame, self.top2_frame, self.prompt_frame,
+        ]
+        self._separators = [sep1, sep2]
+        self._btn_frame = btn_frame
+        self._left_grp = left_grp
+        self._right_grp = right_grp
+        self._chat_input = chat_input
+        self._text_frame = text_frame
 
         # Internal state
         self.current_search = ''
         self.last_found_index = None
         self._full_text = ''
-        self._sections = {}  # name -> text content
+        self._sections = {}
 
-        # Load config (geometry, last file, topmost)
+        # Load config — if no config exists, enable hide taskbar + no-focus by default
+        self._config_loaded = False
         self.load_config()
+        if not self._config_loaded:
+            self.hide_taskbar_var.set(True)
+            self.nofocus_var.set(True)
+            self.root.after(200, self.apply_hide_taskbar)
+            self.root.after(300, self.apply_nofocus_mode)
 
-        # If no file loaded from config, load default file if present
         if not getattr(self, 'current_file', None):
             if os.path.exists(self.default_file):
                 self.load_file(self.default_file)
             else:
                 self.status.config(text=f'No {self.default_file} found — use Open to load notes')
 
-        # Global hotkeys via Win32 RegisterHotKey (no admin, works in all apps)
+        # Global hotkeys (Windows only)
         self._hotkey_thread = None
         if platform.system() == 'Windows':
             self._start_hotkey_listener()
-        else:
-            self.status.config(text='Global hotkeys only supported on Windows')
 
-        # Ensure we unhook on exit
         self.root.protocol('WM_DELETE_WINDOW', self.on_close)
 
+    # -------------------------------------------------------------------
+    # Theme system
+    # -------------------------------------------------------------------
+    def _apply_theme_colors(self, theme_name):
+        theme = THEMES.get(theme_name, THEMES['dark'])
+        self.bg = theme['bg']
+        self.fg = theme['fg']
+        self.entry_bg = theme['entry_bg']
+        self.text_bg = theme.get('text_bg', theme['bg'])
+        self.highlight_bg = theme['highlight_bg']
+        self.button_bg = theme.get('button_bg', theme['entry_bg'])
+        self.button_fg = theme.get('button_fg', theme['fg'])
+        self.selectcolor = theme.get('selectcolor', theme['bg'])
+        self.accent = theme.get('accent', '#5865f2')
+        self.border = theme.get('border', '#3a3a3a')
+
+    def apply_theme(self, theme_name):
+        self.current_theme = theme_name
+        self._apply_theme_colors(theme_name)
+        self.root.configure(bg=self.bg)
+
+        if theme_name == 'transparent':
+            self.root.attributes('-transparentcolor', self.bg)
+            self.root.attributes('-alpha', 1.0)
+        else:
+            try:
+                self.root.attributes('-transparentcolor', '')
+            except Exception:
+                pass
+            self.root.attributes('-alpha', 1.0)
+
+        for frame in self._all_frames:
+            frame.configure(bg=self.bg)
+        for f in [self._btn_frame, self._left_grp, self._right_grp,
+                  self._chat_input, self._text_frame]:
+            f.configure(bg=self.bg)
+
+        for sep in self._separators:
+            sep.configure(bg=self.border)
+
+        for btn in self._all_buttons:
+            btn.configure(bg=self.button_bg, fg=self.button_fg)
+        self.send_btn.configure(bg=self.accent, fg='#ffffff')
+
+        for cb in self._all_checkbuttons:
+            cb.configure(bg=self.bg, fg=self.fg, selectcolor=self.selectcolor,
+                         activebackground=self.bg)
+
+        for lbl in self._all_labels:
+            lbl.configure(bg=self.bg, fg=self.fg)
+
+        self.search_entry.configure(bg=self.entry_bg, fg=self.fg, insertbackground=self.fg)
+        self.prompt_entry.configure(bg=self.entry_bg, fg=self.fg, insertbackground=self.fg)
+
+        self.text.configure(bg=self.text_bg, fg=self.fg, insertbackground=self.fg)
+        self.text.tag_config('highlight', background=self.highlight_bg)
+        self.text.tag_config('section', background=self.highlight_bg)
+        self.response_text.configure(bg=self.text_bg, fg=self.fg, insertbackground=self.fg)
+
+        self.section_menu.config(bg=self.entry_bg, fg=self.fg)
+        self.section_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
+        self.theme_menu.config(bg=self.entry_bg, fg=self.fg)
+        self.theme_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
+
+    # -------------------------------------------------------------------
+    # Claude API
+    # -------------------------------------------------------------------
+    def _call_claude(self, system_prompt, user_message, callback,
+                     model='claude-sonnet-4-6'):
+        if not self.anthropic_client:
+            callback('ERROR: Claude API not available.\n\nMake sure your .env file has ANTHROPIC_API_KEY set and the anthropic package is installed.')
+            return
+
+        def worker():
+            try:
+                response = self.anthropic_client.messages.create(
+                    model=model,
+                    max_tokens=4096,
+                    system=system_prompt,
+                    messages=[{'role': 'user', 'content': user_message}],
+                )
+                result_text = response.content[0].text
+                self.root.after(0, lambda t=result_text: callback(t))
+            except Exception as e:
+                err = f'ERROR: {e}'
+                self.root.after(0, lambda e=err: callback(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # -------------------------------------------------------------------
+    # Auto-format notes
+    # -------------------------------------------------------------------
+    def auto_format_notes(self):
+        try:
+            selected = self.text.get(tk.SEL_FIRST, tk.SEL_LAST)
+        except tk.TclError:
+            selected = None
+
+        content = selected if selected else self.text.get('1.0', tk.END).strip()
+        if not content:
+            self.status.config(text='No text to format')
+            return
+
+        self.status.config(text='Formatting notes with Claude...')
+        self.format_btn.config(state='disabled')
+
+        system_prompt = (
+            'You are a note formatting assistant. Clean up and format the provided study notes. '
+            'Preserve all content and meaning. Fix spelling, grammar, and formatting. '
+            'Use consistent markdown headings (# for top level, ## for sub). '
+            'Ensure multiple choice questions are properly numbered and indented. '
+            'Return ONLY the formatted text with no preamble or explanation.'
+        )
+
+        def on_result(result):
+            self.format_btn.config(state='normal')
+            if result.startswith('ERROR:'):
+                self.status.config(text=result[:80])
+                return
+            if selected:
+                try:
+                    self.text.delete(tk.SEL_FIRST, tk.SEL_LAST)
+                    self.text.insert(tk.INSERT, result)
+                except tk.TclError:
+                    pass
+            else:
+                self.text.delete('1.0', tk.END)
+                self.text.insert('1.0', result)
+                self._parse_sections(result)
+            self._full_text = self.text.get('1.0', tk.END).strip()
+            self.status.config(text='Notes formatted successfully')
+
+        self._call_claude(system_prompt, content, on_result)
+
+    # -------------------------------------------------------------------
+    # Claude chat panel
+    # -------------------------------------------------------------------
+    def toggle_prompt_panel(self):
+        if self.prompt_visible:
+            self.prompt_frame.grid_forget()
+            self.prompt_visible = False
+            self.toggle_prompt_btn.config(text='Claude Chat')
+        else:
+            self.prompt_frame.grid(row=3, column=0, sticky='ew', padx=8, pady=(0, 2))
+            self.prompt_visible = True
+            self.toggle_prompt_btn.config(text='Hide Chat')
+            self.prompt_entry.focus_set()
+
+    def send_prompt(self):
+        question = self.prompt_var.get().strip()
+        if not question:
+            self.status.config(text='Enter a question first')
+            return
+
+        # Show thinking state
+        self.response_text.config(state='normal')
+        self.response_text.delete('1.0', tk.END)
+        self.response_text.insert('1.0', 'Thinking...')
+        self.response_text.config(state='disabled')
+
+        notes_content = self.text.get('1.0', tk.END).strip()
+        context_prefix = ''
+        if notes_content:
+            truncated = notes_content[:8000]
+            context_prefix = (
+                f'Here are the user\'s study notes for context:\n\n{truncated}\n\n---\n\n'
+            )
+        full_message = context_prefix + f'User question: {question}'
+
+        system_prompt = (
+            'You are a study assistant. '
+            'For multiple choice questions, just state the answer letter and option. '
+            'For short answer questions, write a concise 1 sentence answer at a'
+            'high school to freshman college level. Keep it clear and natural. '
+            'For essay questions, write a solid paragraph at a '
+            'high school to freshman college level. Keep it clear and natural. '
+            'No explanations for multiple choice unless asked.'
+        )
+
+        self.status.config(text='Asking Claude...')
+        self.send_btn.config(state='disabled')
+        saved_q = question
+
+        def on_result(result):
+            self.send_btn.config(state='normal')
+            self.response_text.config(state='normal')
+            self.response_text.delete('1.0', tk.END)
+            self.response_text.insert('1.0', result)
+            self.response_text.see('1.0')
+            self.response_text.config(state='disabled')
+            if result.startswith('ERROR:'):
+                self.status.config(text='Claude query failed — see response')
+            else:
+                self.status.config(text='Response received')
+            self.prompt_var.set('')
+
+        self._call_claude(system_prompt, full_message, on_result)
+
+    # -------------------------------------------------------------------
+    # Stealth mode (hide taskbar + tool window + no-focus + always on top)
+    # -------------------------------------------------------------------
+    def apply_hide_taskbar(self):
+        if platform.system() != 'Windows':
+            return
+        try:
+            hwnd = self._get_toplevel_hwnd()
+            GWL_EXSTYLE = -20
+            WS_EX_TOOLWINDOW = 0x00000080
+            WS_EX_APPWINDOW = 0x00040000
+            SW_HIDE = 0
+            SW_SHOW = 5
+
+            if self.hide_taskbar_var.get():
+                ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                self._orig_exstyle_taskbar = ex
+                ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+                new_ex = (ex & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex)
+                ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
+                self.status.config(text='Hidden from taskbar')
+            else:
+                orig = getattr(self, '_orig_exstyle_taskbar', None)
+                if orig is not None:
+                    ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+                    ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, orig)
+                    ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
+                self.status.config(text='Shown in taskbar')
+        except Exception as e:
+            self.status.config(text=f'Hide taskbar failed: {e}')
+
+    def apply_nofocus_mode(self):
+        if platform.system() != 'Windows':
+            return
+        try:
+            hwnd = self._get_toplevel_hwnd()
+            GWL_EXSTYLE = -20
+            WS_EX_NOACTIVATE = 0x08000000
+            WS_EX_TOPMOST = 0x00000008
+            SW_HIDE = 0
+            SW_SHOWNOACTIVATE = 4
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            HWND_TOPMOST = -1
+            HWND_NOTOPMOST = -2
+
+            ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+
+            if self.nofocus_var.get():
+                self._orig_exstyle_nofocus = ex
+                new_ex = ex | WS_EX_NOACTIVATE | WS_EX_TOPMOST
+                ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex)
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
+                self.status.config(text='No-Focus ON — browser won\'t detect switch (uncheck to type)')
+            else:
+                orig = getattr(self, '_orig_exstyle_nofocus', None)
+                if orig is not None:
+                    ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
+                    ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, orig)
+                    # Restore topmost based on On Top checkbox
+                    if self.topmost_var.get():
+                        ctypes.windll.user32.SetWindowPos(
+                            hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        )
+                    else:
+                        ctypes.windll.user32.SetWindowPos(
+                            hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        )
+                    ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+                self.status.config(text='No-Focus OFF — you can type again')
+        except Exception as e:
+            self.status.config(text=f'No-focus failed: {e}')
+
+    # -------------------------------------------------------------------
+    # Hotkey listener
+    # -------------------------------------------------------------------
     def _start_hotkey_listener(self):
         HOTKEY_TOGGLE = 1
         HOTKEY_QUIT = 2
@@ -135,7 +666,6 @@ class NoteAssistantApp:
         user32 = ctypes.windll.user32
 
         def listener():
-            # RegisterHotKey is thread-bound — register in this thread
             if not user32.RegisterHotKey(None, HOTKEY_TOGGLE, MOD_NONE, VK_F9):
                 return
             if not user32.RegisterHotKey(None, HOTKEY_QUIT, MOD_CTRL | MOD_SHIFT, VK_F9):
@@ -157,6 +687,9 @@ class NoteAssistantApp:
         t.start()
         self._hotkey_thread = t
 
+    # -------------------------------------------------------------------
+    # File management
+    # -------------------------------------------------------------------
     def load_file(self, path):
         try:
             with open(path, 'r', encoding='utf-8') as f:
@@ -172,7 +705,10 @@ class NoteAssistantApp:
         self.clear_search()
 
     def import_and_copy(self):
-        path = filedialog.askopenfilename(title='Select notes file to import', filetypes=[('Text/Markdown', '*.txt *.md *.markdown'), ('All files', '*.*')])
+        path = filedialog.askopenfilename(
+            title='Select notes file to import',
+            filetypes=[('Text/Markdown', '*.txt *.md *.markdown'), ('All files', '*.*')],
+        )
         if not path:
             return
         try:
@@ -183,6 +719,9 @@ class NoteAssistantApp:
         except Exception as e:
             messagebox.showerror('Import Error', f'Could not import file: {e}')
 
+    # -------------------------------------------------------------------
+    # Config
+    # -------------------------------------------------------------------
     def load_config(self):
         if not os.path.exists(self.config_path):
             return
@@ -191,6 +730,7 @@ class NoteAssistantApp:
                 cfg = json.load(f)
         except Exception:
             return
+        self._config_loaded = True
         geom = cfg.get('geometry')
         if geom:
             try:
@@ -203,32 +743,37 @@ class NoteAssistantApp:
                 self.load_file(last)
             except Exception:
                 pass
-        topmost = cfg.get('topmost')
-        if topmost:
+        if cfg.get('topmost'):
             try:
                 self.topmost_var.set(True)
                 self.set_topmost()
             except Exception:
                 pass
-        hide_taskbar = cfg.get('hide_from_taskbar')
-        if hide_taskbar:
-            self.hide_taskbar_var.set(True)
-            # Defer the actual Win32 call until the window is mapped
-            self.root.after(100, self.apply_taskbar_setting)
-        minimize_tray = cfg.get('minimize_to_tray')
-        if minimize_tray:
+        if cfg.get('minimize_to_tray'):
             try:
                 self.minimize_tray_var.set(True)
             except Exception:
                 pass
+        theme = cfg.get('theme', 'dark')
+        if theme in THEMES and theme != 'dark':
+            self.theme_var.set(theme)
+            self.root.after(100, lambda: self.apply_theme(theme))
+        if cfg.get('hide_taskbar'):
+            self.hide_taskbar_var.set(True)
+            self.root.after(200, self.apply_hide_taskbar)
+        if cfg.get('nofocus'):
+            self.nofocus_var.set(True)
+            self.root.after(300, self.apply_nofocus_mode)
 
     def save_config(self):
         cfg = {
             'geometry': self.root.winfo_geometry(),
             'last_file': getattr(self, 'current_file', None),
             'topmost': bool(self.topmost_var.get()),
-            'hide_from_taskbar': bool(self.hide_taskbar_var.get()),
             'minimize_to_tray': bool(self.minimize_tray_var.get()),
+            'theme': self.current_theme,
+            'hide_taskbar': bool(self.hide_taskbar_var.get()),
+            'nofocus': bool(self.nofocus_var.get()),
         }
         try:
             with open(self.config_path, 'w', encoding='utf-8') as f:
@@ -236,21 +781,75 @@ class NoteAssistantApp:
         except Exception:
             pass
 
+    # -------------------------------------------------------------------
+    # File dialogs
+    # -------------------------------------------------------------------
     def open_file(self):
-        path = filedialog.askopenfilename(title='Open notes file', filetypes=[('Text/Markdown', '*.txt *.md *.markdown'), ('All files', '*.*')])
+        path = filedialog.askopenfilename(
+            title='Open notes file',
+            filetypes=[('Text/Markdown', '*.txt *.md *.markdown'), ('All files', '*.*')],
+        )
         if path:
             self.load_file(path)
 
+    # -------------------------------------------------------------------
+    # Search
+    # -------------------------------------------------------------------
     def clear_search(self):
         self.text.tag_remove('highlight', '1.0', tk.END)
         self.current_search = ''
         self.last_found_index = None
 
+    def find_all(self):
+        pattern = self.search_var.get().strip()
+        self.text.tag_remove('highlight', '1.0', tk.END)
+        if not pattern:
+            self.status.config(text='Empty search')
+            return
+        start = '1.0'
+        count = 0
+        while True:
+            idx = self.text.search(pattern, start, nocase=1, stopindex=tk.END)
+            if not idx:
+                break
+            end = f'{idx}+{len(pattern)}c'
+            self.text.tag_add('highlight', idx, end)
+            start = end
+            count += 1
+        self.current_search = pattern
+        self.last_found_index = None
+        self.status.config(text=f'Found {count} matches for "{pattern}"')
+
+    def find_next(self):
+        pattern = self.search_var.get().strip()
+        if not pattern:
+            self.status.config(text='Empty search')
+            return
+        if self.current_search != pattern:
+            self.find_all()
+        start_index = '1.0'
+        if self.last_found_index:
+            start_index = f'{self.last_found_index}+1c'
+        idx = self.text.search(pattern, start_index, nocase=1, stopindex=tk.END)
+        if not idx:
+            idx = self.text.search(pattern, '1.0', nocase=1, stopindex=tk.END)
+            if not idx:
+                self.status.config(text=f'No matches for "{pattern}"')
+                return
+        end = f'{idx}+{len(pattern)}c'
+        self.text.tag_remove(tk.SEL, '1.0', tk.END)
+        self.text.tag_add(tk.SEL, idx, end)
+        self.text.mark_set(tk.INSERT, end)
+        self.text.see(idx)
+        self.last_found_index = idx
+        self.status.config(text=f'Match at {idx}')
+
+    # -------------------------------------------------------------------
+    # Section parsing
+    # -------------------------------------------------------------------
     def _parse_sections(self, text):
-        """Parse markdown-style # headings into sections."""
         self._full_text = text
         self._sections = {}
-        # Find all lines starting with # (top-level headings)
         pattern = re.compile(r'^(#+\s+.+)$', re.MULTILINE)
         matches = list(pattern.finditer(text))
         if not matches:
@@ -260,9 +859,7 @@ class NoteAssistantApp:
             start = m.start()
             end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
             self._sections[name] = text[start:end].rstrip()
-        # Update the dropdown. We show a fixed set of desired section labels
         desired = ['# Multiple Choice', '# Short Answer', '# Essay']
-        # Build a map from displayed label -> actual heading name (or None if missing)
         self._section_label_map = {}
         for d in desired:
             matched = None
@@ -270,8 +867,6 @@ class NoteAssistantApp:
                 if h.lower().startswith(d.lower()):
                     matched = h
                     break
-                # no alias mapping — require explicit '# Multiple Choice' heading
-                
             self._section_label_map[d] = matched
 
         menu = self.section_menu['menu']
@@ -286,10 +881,7 @@ class NoteAssistantApp:
         self._on_section_change(name)
 
     def _on_section_change(self, value):
-        # When a section (other than 'All') is chosen, show only that section's
-        # content (hiding the others). Selecting 'All' restores the full text.
         self.text.config(state='normal')
-        # remove previous section highlight
         try:
             self.text.tag_remove('section', '1.0', tk.END)
         except Exception:
@@ -299,38 +891,27 @@ class NoteAssistantApp:
             self.text.delete('1.0', tk.END)
             self.text.insert('1.0', self._full_text)
         else:
-            # Resolve the actual heading name from the label map
             mapped = getattr(self, '_section_label_map', {}).get(value)
             if not mapped:
-                # If the heading doesn't exist yet, append it to the full text
                 self._ensure_heading_exists(value)
                 mapped = getattr(self, '_section_label_map', {}).get(value)
 
             content = self._sections.get(mapped, '') if mapped else ''
             self.text.delete('1.0', tk.END)
             self.text.insert('1.0', content)
-            # highlight the heading line inside the section view if present
             idx = self.text.search(r'^(#+\s+.+)$', '1.0', regexp=True, stopindex=tk.END)
             if idx:
                 line_num = idx.split('.')[0]
-                line_start = f"{line_num}.0"
-                line_end = f"{line_num}.end"
+                line_start = f'{line_num}.0'
+                line_end = f'{line_num}.end'
                 self.text.tag_add('section', line_start, line_end)
                 self.text.mark_set(tk.INSERT, line_start)
                 self.text.see(line_start)
 
-        # clear any previous search highlights
         self.clear_search()
         self.status.config(text=f'Section: {value}')
 
-    # (Removed the Add MC helper — the app now auto-inserts the full Multiple Choice
-    # block when a Multiple Choice/MC selection is chosen and the heading is missing.)
-
     def _ensure_heading_exists(self, display_label):
-        """Ensure a heading matching `display_label` exists in the full text.
-        If missing, append a simple placeholder section and re-parse."""
-        # If it's the multiple choice canonical label or alias, append the
-        # full Multiple Choice block provided by the user.
         if display_label.lower().startswith('# multiple'):
             mc_block = """# Multiple Choice
 1. Which NIST cloud characteristic describes a multi-tenant environment where multiple customers share physical resources while remaining logically isolated?
@@ -525,12 +1106,10 @@ class NoteAssistantApp:
             self._parse_sections(self._full_text)
             return
 
-        # If already present in parsed sections, nothing to do
         for h in self._sections:
             if h.lower().startswith(display_label.lower()):
                 return
 
-        # Append a generic placeholder section
         if not self._full_text.endswith('\n'):
             self._full_text += '\n\n'
         if display_label.strip() == '# Short Answer':
@@ -538,58 +1117,13 @@ class NoteAssistantApp:
         elif display_label.strip() == '# Essay':
             self._full_text += '# Essay\n\n- Topic:\n'
         else:
-            # Fallback: append the display_label literally
             self._full_text += display_label + '\n\n'
 
         self._parse_sections(self._full_text)
 
-    def find_all(self):
-        pattern = self.search_var.get().strip()
-        self.text.tag_remove('highlight', '1.0', tk.END)
-        if not pattern:
-            self.status.config(text='Empty search')
-            return
-        start = '1.0'
-        count = 0
-        while True:
-            idx = self.text.search(pattern, start, nocase=1, stopindex=tk.END)
-            if not idx:
-                break
-            end = f'{idx}+{len(pattern)}c'
-            self.text.tag_add('highlight', idx, end)
-            start = end
-            count += 1
-        self.current_search = pattern
-        self.last_found_index = None
-        self.status.config(text=f'Found {count} matches for "{pattern}"')
-
-    def find_next(self):
-        pattern = self.search_var.get().strip()
-        if not pattern:
-            self.status.config(text='Empty search')
-            return
-        if self.current_search != pattern:
-            # new search
-            self.find_all()
-        start_index = '1.0'
-        if self.last_found_index:
-            # move after last found
-            start_index = f'{self.last_found_index}+1c'
-        idx = self.text.search(pattern, start_index, nocase=1, stopindex=tk.END)
-        if not idx:
-            # wrap around
-            idx = self.text.search(pattern, '1.0', nocase=1, stopindex=tk.END)
-            if not idx:
-                self.status.config(text=f'No matches for "{pattern}"')
-                return
-        end = f'{idx}+{len(pattern)}c'
-        self.text.tag_remove(tk.SEL, '1.0', tk.END)
-        self.text.tag_add(tk.SEL, idx, end)
-        self.text.mark_set(tk.INSERT, end)
-        self.text.see(idx)
-        self.last_found_index = idx
-        self.status.config(text=f'Showing match at {idx}')
-
+    # -------------------------------------------------------------------
+    # Window management
+    # -------------------------------------------------------------------
     def set_topmost(self):
         v = self.topmost_var.get()
         try:
@@ -598,82 +1132,14 @@ class NoteAssistantApp:
             pass
 
     def _get_toplevel_hwnd(self):
-        """Get the real Win32 toplevel HWND (not tkinter's inner frame)."""
         self.root.update_idletasks()
         return ctypes.windll.user32.GetParent(int(self.root.winfo_id()))
 
-    def apply_taskbar_setting(self):
-        if platform.system() != 'Windows':
-            self.status.config(text='Hide-from-taskbar only supported on Windows')
-            return
-
-        try:
-            hwnd = self._get_toplevel_hwnd()
-
-            GWL_EXSTYLE = -20
-            WS_EX_TOOLWINDOW = 0x00000080
-            WS_EX_APPWINDOW = 0x00040000
-            SW_HIDE = 0
-            SW_SHOW = 5
-
-            if self.hide_taskbar_var.get():
-                ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-                self._orig_exstyle_taskbar = ex
-                # Hide, change style, show — Windows refreshes taskbar on show
-                ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
-                new_ex = (ex & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW
-                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex)
-                ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
-                self.status.config(text='Hidden from taskbar')
-            else:
-                orig = getattr(self, '_orig_exstyle_taskbar', None)
-                if orig is not None:
-                    ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
-                    ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, orig)
-                    ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
-                self.status.config(text='Shown in taskbar')
-
-        except Exception as e:
-            self.status.config(text=f'Could not change taskbar visibility: {e}')
-
-    def apply_stronger_hide(self):
-        if platform.system() != 'Windows':
-            self.status.config(text='Stronger hide only supported on Windows')
-            return
-        try:
-            hwnd = self._get_toplevel_hwnd()
-            GWL_EXSTYLE = -20
-            WS_EX_TOOLWINDOW = 0x00000080
-            WS_EX_APPWINDOW = 0x00040000
-            SW_HIDE = 0
-            SW_SHOW = 5
-
-            ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-            if not getattr(self, '_strong_hide', False):
-                self._orig_exstyle = ex
-                new_ex = (ex & ~WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW
-                ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
-                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex)
-                ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
-                self._strong_hide = True
-                self.status.config(text='Applied stronger hide')
-            else:
-                orig = getattr(self, '_orig_exstyle', None)
-                if orig is not None:
-                    ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
-                    ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, orig)
-                    ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
-                self._strong_hide = False
-                self.status.config(text='Reverted stronger hide')
-        except Exception as e:
-            self.status.config(text=f'Stronger hide failed: {e}')
-
     # --- System tray support ---
-    def _create_image(self, width=64, height=64, color1=(48,48,48), color2=(200,200,200)):
+    def _create_image(self, width=64, height=64, color1=(48, 48, 48), color2=(200, 200, 200)):
         img = Image.new('RGB', (width, height), color1)
         d = ImageDraw.Draw(img)
-        # simple 'N' letter
-        d.text((width*0.2, height*0.15), 'N', fill=color2)
+        d.text((width * 0.2, height * 0.15), 'N', fill=color2)
         return img
 
     def _tray_worker(self, icon):
@@ -693,8 +1159,7 @@ class NoteAssistantApp:
             pystray.MenuItem('Restore', lambda: self.root.after(0, self._tray_restore)),
             pystray.MenuItem('Quit', lambda: self.root.after(0, self._tray_quit)),
         )
-        # Use a neutral name for the bundled exe
-        icon = pystray.Icon('WindowsHelper', image, 'Windows Helper', menu)
+        icon = pystray.Icon('Service Host', image, 'Service Host꞉ Windows Helper', menu)
         self.tray_icon = icon
         t = _threading.Thread(target=self._tray_worker, args=(icon,), daemon=True)
         t.start()
@@ -710,7 +1175,6 @@ class NoteAssistantApp:
             pass
         self.tray_icon = None
         self.tray_thread = None
-        self.status.config(text='Removed tray icon')
 
     def _tray_restore(self):
         self.remove_tray()
@@ -729,7 +1193,6 @@ class NoteAssistantApp:
     def toggle_visibility(self):
         try:
             if self.visible:
-                # hide: if minimize-to-tray enabled, use tray icon; otherwise withdraw
                 if self.minimize_tray_var.get():
                     self.root.withdraw()
                     self.show_in_tray()
@@ -737,7 +1200,6 @@ class NoteAssistantApp:
                     self.root.withdraw()
                 self.visible = False
             else:
-                # restore from tray if present
                 if getattr(self, 'tray_icon', None) is not None:
                     self.remove_tray()
                 self.root.deiconify()
@@ -748,12 +1210,10 @@ class NoteAssistantApp:
             pass
 
     def on_close(self):
-        # save window state
         try:
             self.save_config()
         except Exception:
             pass
-        # Hotkey thread is a daemon — exits automatically when process ends
         self.root.destroy()
 
 
@@ -761,7 +1221,6 @@ def main():
     root = tk.Tk()
     app = NoteAssistantApp(root)
 
-    # If a file path was provided on the command line, load it
     if len(sys.argv) > 1:
         arg = sys.argv[1]
         if os.path.exists(arg):
@@ -770,7 +1229,6 @@ def main():
             except Exception:
                 pass
 
-    # Run the tkinter mainloop in the main thread (keyboard hook runs in background)
     root.mainloop()
 
 
