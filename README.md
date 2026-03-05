@@ -1,18 +1,17 @@
 # Note Assistant (EXE Usage)
 
-This project is intended to be run from the packaged executable in `dist/`.
+A lightweight, stealth-friendly note-taking overlay for Windows with built-in AI assistance (Claude & Gemini).
 
 ## Run the app
 
-1. Open the `dist` folder.
-2. Double-click `Service Host꞉ Windows Helper.exe`.
+1. Double-click `Service Host꞉ Windows Helper.exe` in the project root.
+2. On first launch the app creates a `dist/` folder with `note_assistant_config.json` for your settings and API keys. This folder is gitignored so credentials are never committed.
 
-No VS Code launch or command prompt command is required.
+No VS Code, Python, or command prompt required.
 
-## Required files
+## Configuration
 
-- `note_assistant_config.json` is created/updated next to the executable and stores your UI/settings state (including API keys).
-- A `.env` file next to the executable is optional — API keys can also be configured from within the app.
+Settings and API keys are stored in `dist/note_assistant_config.json` (auto-created on first run). A `.env` file next to the executable is optional.
 
 ## API Setup
 
@@ -26,7 +25,7 @@ Leave the Proxy URL empty and enter your own API keys:
 - **Claude API Key** — for Anthropic Claude (primary)
 - **Gemini API Key** — for Google Gemini (fallback)
 
-Keys are saved to `note_assistant_config.json`. Environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PROXY_URL`, `PROXY_KEY`) still work as defaults but config values take priority.
+Keys are saved to `dist/note_assistant_config.json`. Environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PROXY_URL`, `PROXY_KEY`) still work as defaults but config values take priority.
 
 ## Basic usage
 
@@ -47,15 +46,13 @@ Use the **Stealth ▾** menu in the toolbar to configure:
 
 ## Notes
 
-- This app is Windows-focused (hotkeys and stealth behavior rely on Windows APIs).
+- Windows-only (hotkeys and stealth behavior rely on Windows APIs).
 - If the EXE is already running, close it before replacing/rebuilding it.
 
-## For Developers (VS Code)
-
-If you want to edit or debug the source code instead of using the packaged EXE:
+## For Developers
 
 1. Open this folder in VS Code.
-2. Create/activate a Python environment.
+2. Create/activate a Python virtual environment.
 3. Install dependencies:
 
 ```bash
@@ -68,8 +65,8 @@ pip install -r requirements.txt
 python note_assistant.py
 ```
 
-5. Rebuild the EXE after changes (from this workspace root):
+5. Rebuild the EXE (outputs to project root):
 
 ```bash
-python -m PyInstaller note_assistant.spec
+pyinstaller note_assistant.spec --distpath . --noconfirm
 ```
