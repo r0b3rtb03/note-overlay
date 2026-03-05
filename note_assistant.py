@@ -171,9 +171,31 @@ class NoteAssistantApp:
         self.default_file = default_file
         self.visible = True
 
-        # Config lives next to the exe (not in _MEIPASS temp dir)
+        # Config lives in a dist/ subfolder next to the exe
         exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        self.config_path = os.path.join(exe_dir, 'note_assistant_config.json')
+        self.data_dir = os.path.join(exe_dir, 'dist')
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.config_path = os.path.join(self.data_dir, 'note_assistant_config.json')
+        if not os.path.exists(self.config_path):
+            default_cfg = {
+                "geometry": "710x500+341+403",
+                "last_file": None,
+                "topmost": False,
+                "minimize_to_tray": False,
+                "theme": "dark",
+                "hide_taskbar": True,
+                "nofocus": False,
+                "snip_text_color": "black",
+                "snip_font_family": "Arial",
+                "snip_font_size": "10",
+                "snip_hide_text": False,
+                "proxy_url": "",
+                "proxy_key": "",
+                "claude_api_key": "",
+                "gemini_api_key": ""
+            }
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(default_cfg, f, indent=2)
 
         # Proxy mode — single URL + key replaces direct API clients
         self.proxy_url = os.environ.get('PROXY_URL', '').rstrip('/')

@@ -5,7 +5,7 @@ a = Analysis(
     ['note_assistant.py'],
     pathex=[],
     binaries=[],
-    datas=[('note_assistant_config.json', '.'), ('.env', '.')],
+    datas=[('.env', '.')],
     hiddenimports=['anthropic', 'dotenv', 'pystray', 'PIL'],
     hookspath=[],
     hooksconfig={},
