@@ -11,8 +11,22 @@ No VS Code launch or command prompt command is required.
 
 ## Required files
 
-- Keep your `.env` file next to the executable if you use API features (Claude/Gemini/Copilot/OCR).
-- `note_assistant_config.json` is created/updated next to the executable and stores your UI/settings state.
+- `note_assistant_config.json` is created/updated next to the executable and stores your UI/settings state (including API keys).
+- A `.env` file next to the executable is optional — API keys can also be configured from within the app.
+
+## API Setup
+
+Click the **API** button in the toolbar to open the API Settings dialog. Two modes are available:
+
+### Proxy mode
+Set a **Proxy URL** and **Proxy Key** to route all AI requests through a shared proxy (e.g. a Cloudflare Worker). Leave the direct API key fields empty.
+
+### Direct API key mode
+Leave the Proxy URL empty and enter your own API keys:
+- **Claude API Key** — for Anthropic Claude (primary)
+- **Gemini API Key** — for Google Gemini (fallback)
+
+Keys are saved to `note_assistant_config.json`. Environment variables (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PROXY_URL`, `PROXY_KEY`) still work as defaults but config values take priority.
 
 ## Basic usage
 
