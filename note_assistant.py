@@ -175,11 +175,15 @@ class NoteAssistantApp:
         exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         self.config_path = os.path.join(exe_dir, 'note_assistant_config.json')
 
+        # Proxy mode — single URL + key replaces direct API clients
+        self.proxy_url = os.environ.get('PROXY_URL', '').rstrip('/')
+        self.proxy_key = os.environ.get('PROXY_KEY', '')
+
         # Claude API client
         # Force IPv4 — IPv6 TLS to api.anthropic.com is broken on some networks
         self.anthropic_client = None
         api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if ANTHROPIC_AVAILABLE and api_key:
+        if not self.proxy_url and ANTHROPIC_AVAILABLE and api_key:
             try:
                 import httpx as _httpx
                 transport = _httpx.HTTPTransport(local_address='0.0.0.0')
@@ -194,7 +198,7 @@ class NoteAssistantApp:
         self.gemini_model = None
         self.gemini_vision_model = None
         gemini_key = os.environ.get('GEMINI_API_KEY')
-        if GEMINI_AVAILABLE and gemini_key and gemini_key != 'YOUR_GEMINI_KEY_HERE':
+        if not self.proxy_url and GEMINI_AVAILABLE and gemini_key and gemini_key != 'YOUR_GEMINI_KEY_HERE':
             try:
                 genai.configure(api_key=gemini_key)
                 self.gemini_model = genai.GenerativeModel('gemini-2.0-flash')
@@ -469,15 +473,18 @@ class NoteAssistantApp:
         self.status.grid(row=4, column=0, sticky='ew', padx=8, pady=(0, 4))
 
         # Show API status at startup
-        apis = []
-        if self.anthropic_client:
-            apis.append('Claude')
-        if self.gemini_model:
-            apis.append('Gemini')
-        if apis:
-            self.status.config(text=f'AI ready: {" + ".join(apis)}' + (' (Gemini fallback)' if len(apis) == 2 else ''))
+        if self.proxy_url:
+            self.status.config(text=f'AI ready: Proxy mode')
         else:
-            self.status.config(text='No AI API configured — set ANTHROPIC_API_KEY or GEMINI_API_KEY in .env')
+            apis = []
+            if self.anthropic_client:
+                apis.append('Claude')
+            if self.gemini_model:
+                apis.append('Gemini')
+            if apis:
+                self.status.config(text=f'AI ready: {" + ".join(apis)}' + (' (Gemini fallback)' if len(apis) == 2 else ''))
+            else:
+                self.status.config(text='No AI API configured — set PROXY_URL or API keys in .env')
 
         # Widget collections for theme updates
         self._all_buttons = [
@@ -598,12 +605,48 @@ class NoteAssistantApp:
             _menu.config(bg=self.entry_bg, fg=self.fg)
 
     # -------------------------------------------------------------------
-    # Claude API
+    # AI API calls (proxy mode + direct mode)
     # -------------------------------------------------------------------
+    def _call_proxy(self, system_prompt, user_message, callback, image_b64=None):
+        """Call the Cloudflare Worker proxy for text or vision queries."""
+        import urllib.request
+        import json as _json
+
+        def worker():
+            payload = {
+                'proxy_key': self.proxy_key,
+                'system': system_prompt,
+                'message': user_message,
+            }
+            if image_b64:
+                payload['image_b64'] = image_b64
+            try:
+                data = _json.dumps(payload).encode('utf-8')
+                req = urllib.request.Request(
+                    self.proxy_url,
+                    data=data,
+                    headers={'Content-Type': 'application/json'},
+                    method='POST',
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    body = _json.loads(resp.read().decode('utf-8'))
+                text = body.get('text', '')
+                error = body.get('error', '')
+                if text:
+                    self.root.after(0, lambda t=text: callback(t))
+                else:
+                    err = f'ERROR: Proxy: {error or "empty response"}'
+                    self.root.after(0, lambda e=err: callback(e))
+            except Exception as e:
+                err = f'ERROR: Proxy request failed: {e}'
+                self.root.after(0, lambda e=err: callback(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _call_gemini(self, system_prompt, user_message, callback):
         """Fallback: call Gemini API for text queries."""
         if not self.gemini_model:
-            callback('ERROR: No AI API available.\n\nSet ANTHROPIC_API_KEY or GEMINI_API_KEY in .env')
+            callback('ERROR: No AI API available.\n\nSet PROXY_URL or API keys in .env')
             return
 
         def worker():
@@ -620,8 +663,13 @@ class NoteAssistantApp:
 
     def _call_claude(self, system_prompt, user_message, callback,
                      model='claude-sonnet-4-6'):
+        # Proxy mode — route everything through the worker
+        if self.proxy_url:
+            self._call_proxy(system_prompt, user_message, callback)
+            return
+
         if not self.anthropic_client and not self.gemini_model:
-            callback('ERROR: No AI API available.\n\nSet ANTHROPIC_API_KEY or GEMINI_API_KEY in .env')
+            callback('ERROR: No AI API available.\n\nSet PROXY_URL or API keys in .env')
             return
         if not self.anthropic_client:
             self._call_gemini(system_prompt, user_message, callback)
@@ -773,7 +821,7 @@ class NoteAssistantApp:
 
     def _stealth_text(self):
         """Text-hotkey triggered — grab highlighted text, send to Claude, show answer like stealth snip."""
-        if not self.anthropic_client and not self.gemini_model:
+        if not self.proxy_url and not self.anthropic_client and not self.gemini_model:
             self.status.config(text='No AI API available')
             return
 
@@ -961,7 +1009,7 @@ class NoteAssistantApp:
         self._call_claude_vision(img, tooltip=False)
 
     def _call_claude_vision(self, pil_image, tooltip=False):
-        if not self.anthropic_client and not self.gemini_vision_model:
+        if not self.proxy_url and not self.anthropic_client and not self.gemini_vision_model:
             self.status.config(text='No AI API available for vision')
             return
 
@@ -1022,6 +1070,10 @@ class NoteAssistantApp:
                 self.root.after(0, lambda e=err: on_result(e))
 
         def worker():
+            # Proxy mode handles vision too
+            if self.proxy_url:
+                self._call_proxy(system_prompt, 'Answer the question in this image.', on_result, image_b64=b64)
+                return
             if not self.anthropic_client:
                 gemini_vision_fallback()
                 return
