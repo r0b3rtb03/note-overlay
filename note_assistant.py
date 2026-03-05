@@ -732,6 +732,16 @@ class NoteAssistantApp:
             self.save_config()
             dlg.destroy()
 
+        # Buttons: Save / Cancel
+        btns = tk.Frame(dlg, bg=self.bg)
+        btns.pack(pady=12)
+        tk.Button(btns, text='Save', command=save,
+                  bg=self.button_bg, fg=self.button_fg,
+                  relief='flat', padx=12).pack(side='left', padx=6)
+        tk.Button(btns, text='Cancel', command=dlg.destroy,
+                  bg=self.button_bg, fg=self.button_fg,
+                  relief='flat', padx=12).pack(side='left', padx=6)
+
     def _show_api_diagnostics(self):
         dlg = tk.Toplevel(self.root)
         dlg.title('API Diagnostics')
