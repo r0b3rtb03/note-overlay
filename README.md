@@ -1,50 +1,61 @@
-# Note Assistant (Study Notes)
+# Note Assistant (EXE Usage)
 
-Lightweight Python desktop app to quickly view and search study notes.
+This project is intended to be run from the packaged executable in `dist/`.
 
-Requirements
-- Python 3.8+
-- Optional: `keyboard` (for global hotkey support)
+## Run the app
 
-Install
+1. Open the `dist` folder.
+2. Double-click `Service Host꞉ Windows Helper.exe`.
+
+No VS Code launch or command prompt command is required.
+
+## Required files
+
+- Keep your `.env` file next to the executable if you use API features (Claude/Gemini/Copilot/OCR).
+- `note_assistant_config.json` is created/updated next to the executable and stores your UI/settings state.
+
+## Basic usage
+
+- Open notes with the **Open** button.
+- Search with the search box (**Enter** = next match).
+- Use **Snip & Ask** for normal screenshot Q&A.
+- Use **F10** for stealth snip.
+- Stealth results copy to clipboard automatically.
+
+## Stealth settings
+
+Use the **Stealth ▾** menu in the toolbar to configure:
+
+- Text color
+- Font family
+- Font size
+- **Copy Only (Hide Text)** mode
+
+## Notes
+
+- This app is Windows-focused (hotkeys and stealth behavior rely on Windows APIs).
+- If the EXE is already running, close it before replacing/rebuilding it.
+
+## For Developers (VS Code)
+
+If you want to edit or debug the source code instead of using the packaged EXE:
+
+1. Open this folder in VS Code.
+2. Create/activate a Python environment.
+3. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Running
-
-Open this workspace in VS Code and run:
+4. Run from source:
 
 ```bash
 python note_assistant.py
 ```
 
-You can also pass a notes file path on startup to load it directly:
+5. Rebuild the EXE after changes (from this workspace root):
 
 ```bash
-python note_assistant.py "C:\\Users\\rober\\Downloads\\Midterm 1 Review.txt"
+python -m PyInstaller note_assistant.spec
 ```
-
-Usage
-- Place `notes.txt` next to `note_assistant.py` or use the Open button.
-- Search using the search box; press Enter for Next.
-- Toggle visibility with Ctrl+Shift+N (global) — requires `keyboard` and may need running VS Code as Administrator on Windows to capture global hotkeys.
-- Check "Always on Top" to keep the window above others.
-
-- Optionally hide the app from the Windows taskbar using the "Hide from Taskbar" checkbox. This uses a Windows API call and is only available on Windows.
-
-- Optionally hide the app from the Windows taskbar using the "Hide from Taskbar" checkbox (Windows-only).
-- Use "Minimize to Tray" to withdraw the window and create a system tray icon (requires `pystray` and `Pillow`).
-
-- Use "Minimize to Tray" to withdraw the window and create a system tray icon (requires `pystray` and `Pillow`).
-- If Windows still shows a taskbar thumbnail, enable "Hide from Taskbar"; if that doesn't suffice, click "Apply Stronger Hide" to try a more aggressive style change. Re-run the button to revert.
-
-Persistence
-- Window geometry, topmost state, and last-opened file are saved to `note_assistant_config.json`.
-
-Notes
-- If global hotkey doesn't work, either run VS Code as Administrator on Windows or skip the `keyboard` dependency and use the app while focused (it still responds to Enter/Find/Next).
-- For a nicer dark theme consider `customtkinter` or migrating to `PyQt5`.
-
-License: MIT-style (use freely)
