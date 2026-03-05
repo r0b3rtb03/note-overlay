@@ -189,6 +189,12 @@ class NoteAssistantApp:
                 "snip_font_family": "Arial",
                 "snip_font_size": "10",
                 "snip_hide_text": False,
+                "hotkeys": {
+                    "toggle": "F9",
+                    "snip": "F10",
+                    "copyonly": "Ctrl+F8",
+                    "text_hotkeys": ["`", "F8", "Ctrl+Shift+Q", "Ctrl+Alt+Q"]
+                },
                 "proxy_url": "",
                 "proxy_key": "",
                 "claude_api_key": "",
@@ -206,6 +212,9 @@ class NoteAssistantApp:
         self.gemini_model = None
         self.gemini_vision_model = None
         self._init_api_clients()
+
+        # Apply visibility for AI features based on keys
+        self._apply_api_ui_visibility()
 
         # Window size and appearance
         self.root.geometry('800x500')
@@ -320,6 +329,19 @@ class NoteAssistantApp:
                                           bg=self.button_bg, fg=self.button_fg,
                                           relief='flat', padx=8, font=('Segoe UI', 9))
         self.api_settings_btn.pack(side='left', padx=(4, 0))
+
+        # Hotkeys config button
+        self.hotkeys_btn = tk.Button(left_grp, text='Hotkeys',
+                         command=self._show_hotkey_settings,
+                         bg=self.button_bg, fg=self.button_fg,
+                         relief='flat', padx=8, font=('Segoe UI', 9))
+        self.hotkeys_btn.pack(side='left', padx=(4, 0))
+
+        # initially hide hotkeys button until UI theme applied
+        try:
+            self.hotkeys_btn.configure(bg=self.button_bg, fg=self.button_fg)
+        except Exception:
+            pass
 
         # Stealth snip settings (compact dropdown)
         self.snip_text_var = tk.StringVar(value='black')
@@ -710,14 +732,115 @@ class NoteAssistantApp:
             self.save_config()
             dlg.destroy()
 
+    def _show_api_diagnostics(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title('API Diagnostics')
+        dlg.geometry('520x300')
+        dlg.configure(bg=self.bg)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        tk.Label(dlg, text='API Diagnostics', bg=self.bg, fg=self.fg,
+                 font=('Segoe UI', 11, 'bold')).pack(pady=(12, 6))
+
+        frame = tk.Frame(dlg, bg=self.bg)
+        frame.pack(fill='both', expand=True, padx=12, pady=6)
+
+        status_lines = []
+        status_lines.append(f"Proxy URL: {self.proxy_url or '<not set>'}")
+        status_lines.append(f"Proxy Key: {'set' if self.proxy_key else '<not set>'}")
+        status_lines.append(f"Claude API Key: {'set' if self._claude_api_key else '<not set>'}")
+        status_lines.append(f"Gemini API Key: {'set' if self._gemini_api_key else '<not set>'}")
+        status_lines.append(f"Anthropic client: {'initialized' if self.anthropic_client else 'not initialized'}")
+        status_lines.append(f"Gemini client: {'initialized' if self.gemini_model else 'not initialized'}")
+
+        txt = scrolledtext.ScrolledText(frame, height=8, wrap='word', bg=self.entry_bg, fg=self.fg)
+        txt.pack(fill='both', expand=True)
+        txt.insert('1.0', '\n'.join(status_lines))
+        txt.config(state='disabled')
+
+        def refresh():
+            self._init_api_clients()
+            self._apply_api_ui_visibility()
+            lines = []
+            lines.append(f"Proxy URL: {self.proxy_url or '<not set>'}")
+            lines.append(f"Proxy Key: {'set' if self.proxy_key else '<not set>'}")
+            lines.append(f"Claude API Key: {'set' if self._claude_api_key else '<not set>'}")
+            lines.append(f"Gemini API Key: {'set' if self._gemini_api_key else '<not set>'}")
+            lines.append(f"Anthropic client: {'initialized' if self.anthropic_client else 'not initialized'}")
+            lines.append(f"Gemini client: {'initialized' if self.gemini_model else 'not initialized'}")
+            txt.config(state='normal')
+            txt.delete('1.0', tk.END)
+            txt.insert('1.0', '\n'.join(lines))
+            txt.config(state='disabled')
+
+        btns = tk.Frame(dlg, bg=self.bg)
+        btns.pack(pady=8)
+        tk.Button(btns, text='Re-check', command=refresh, bg=self.button_bg, fg=self.button_fg, relief='flat', padx=12).pack(side='left', padx=6)
+        tk.Button(btns, text='Close', command=dlg.destroy, bg=self.button_bg, fg=self.button_fg, relief='flat', padx=12).pack(side='left', padx=6)
+
+    def _show_hotkey_settings(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title('Hotkey Settings')
+        dlg.geometry('420x260')
+        dlg.configure(bg=self.bg)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        tk.Label(dlg, text='Hotkey Settings', bg=self.bg, fg=self.fg,
+                 font=('Segoe UI', 11, 'bold')).pack(pady=(12, 6))
+
+        frame = tk.Frame(dlg, bg=self.bg)
+        frame.pack(fill='both', expand=True, padx=12, pady=6)
+
+        tk.Label(frame, text='Toggle UI key (e.g. F9):', bg=self.bg, fg=self.fg).grid(row=0, column=0, sticky='e', pady=6)
+        toggle_e = tk.Entry(frame, bg=self.entry_bg, fg=self.fg)
+        toggle_e.grid(row=0, column=1, sticky='w')
+        toggle_e.insert(0, self._hotkeys_config.get('toggle', 'F9'))
+
+        tk.Label(frame, text='Snip key (e.g. F10):', bg=self.bg, fg=self.fg).grid(row=1, column=0, sticky='e', pady=6)
+        snip_e = tk.Entry(frame, bg=self.entry_bg, fg=self.fg)
+        snip_e.grid(row=1, column=1, sticky='w')
+        snip_e.insert(0, self._hotkeys_config.get('snip', 'F10'))
+
+        tk.Label(frame, text='Copy-only toggle (e.g. Ctrl+F8):', bg=self.bg, fg=self.fg).grid(row=2, column=0, sticky='e', pady=6)
+        copy_e = tk.Entry(frame, bg=self.entry_bg, fg=self.fg)
+        copy_e.grid(row=2, column=1, sticky='w')
+        copy_e.insert(0, self._hotkeys_config.get('copyonly', 'Ctrl+F8'))
+
+        tk.Label(frame, text='Text hotkeys (comma separated):', bg=self.bg, fg=self.fg).grid(row=3, column=0, sticky='ne', pady=6)
+        text_e = tk.Text(frame, height=4, width=28, bg=self.entry_bg, fg=self.fg)
+        text_e.grid(row=3, column=1, sticky='w')
+        text_e.insert('1.0', ','.join(self._hotkeys_config.get('text_hotkeys', [])))
+
+        def save_hotkeys():
+            self._hotkeys_config['toggle'] = toggle_e.get().strip() or 'F9'
+            self._hotkeys_config['snip'] = snip_e.get().strip() or 'F10'
+            self._hotkeys_config['copyonly'] = copy_e.get().strip() or 'Ctrl+F8'
+            txt = text_e.get('1.0', tk.END).strip()
+            self._hotkeys_config['text_hotkeys'] = [s.strip() for s in txt.split(',') if s.strip()]
+            self.save_config()
+            messagebox.showinfo('Hotkeys', 'Hotkeys saved. Restart the app to apply changes.')
+            dlg.destroy()
+
+        btns = tk.Frame(dlg, bg=self.bg)
+        btns.pack(pady=8)
+        tk.Button(btns, text='Save', command=save_hotkeys, bg=self.accent, fg='#ffffff', relief='flat', padx=12).pack(side='left', padx=6)
+        tk.Button(btns, text='Cancel', command=dlg.destroy, bg=self.button_bg, fg=self.button_fg, relief='flat', padx=12).pack(side='left', padx=6)
+
         btn_frame = tk.Frame(dlg, bg=self.bg)
         btn_frame.pack(pady=12)
         tk.Button(btn_frame, text='Save', command=save,
-                  bg=self.accent, fg='#ffffff', relief='flat', padx=16,
-                  font=('Segoe UI', 9, 'bold')).pack(side='left', padx=4)
+              bg=self.accent, fg='#ffffff', relief='flat', padx=16,
+              font=('Segoe UI', 9, 'bold')).pack(side='left', padx=4)
         tk.Button(btn_frame, text='Cancel', command=dlg.destroy,
-                  bg=self.button_bg, fg=self.button_fg, relief='flat', padx=16,
-                  font=('Segoe UI', 9)).pack(side='left', padx=4)
+              bg=self.button_bg, fg=self.button_fg, relief='flat', padx=16,
+              font=('Segoe UI', 9)).pack(side='left', padx=4)
+        tk.Button(btn_frame, text='Diagnostics', command=self._show_api_diagnostics,
+              bg=self.button_bg, fg=self.button_fg, relief='flat', padx=12,
+              font=('Segoe UI', 9)).pack(side='left', padx=8)
 
     # -------------------------------------------------------------------
     # AI API calls (proxy mode + direct mode)
@@ -1116,6 +1239,24 @@ class NoteAssistantApp:
 
         threading.Thread(target=_background, daemon=True).start()
 
+    def _toggle_copy_only(self):
+        """Toggle the 'Copy Only (Hide Text)' stealth setting via hotkey.
+        Shows a brief popup indicating the new state and saves config.
+        """
+        try:
+            new_val = not bool(self.snip_hide_text_var.get())
+            self.snip_hide_text_var.set(new_val)
+            self.save_config()
+            msg = 'copy-only enabled' if new_val else 'copy-only disabled'
+            try:
+                # Show brief tooltip near cursor
+                self._show_tooltip(msg, auto_ms=1200)
+            except Exception:
+                # Fallback to status bar if tooltip fails
+                self.status.config(text=msg)
+        except Exception:
+            pass
+
     def _snip_stealth(self):
         """F10-triggered snip — app stays hidden, result shows as tooltip at cursor."""
         # Hide the window for the capture, keep it hidden afterwards
@@ -1472,6 +1613,48 @@ class NoteAssistantApp:
         except Exception as e:
             self.status.config(text=f'No-focus failed: {e}')
 
+    def _apply_api_ui_visibility(self):
+        """Hide or show AI-reliant UI elements and avoid registering AI hotkeys when APIs are not configured."""
+        api_ok = bool(self.proxy_url or self._claude_api_key or self._gemini_api_key)
+        try:
+            # Prompt/chat controls
+            if not api_ok:
+                try:
+                    self.toggle_prompt_btn.configure(state='disabled')
+                except Exception:
+                    pass
+                try:
+                    self.snip_btn.configure(state='disabled')
+                except Exception:
+                    pass
+                try:
+                    self.send_btn.configure(state='disabled')
+                except Exception:
+                    pass
+                try:
+                    self.prompt_entry.configure(state='disabled')
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.toggle_prompt_btn.configure(state='normal')
+                except Exception:
+                    pass
+                try:
+                    self.snip_btn.configure(state='normal')
+                except Exception:
+                    pass
+                try:
+                    self.send_btn.configure(state='normal')
+                except Exception:
+                    pass
+                try:
+                    self.prompt_entry.configure(state='normal')
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     # -------------------------------------------------------------------
     # Hotkey listener
     # -------------------------------------------------------------------
@@ -1483,6 +1666,8 @@ class NoteAssistantApp:
         HOTKEY_TEXT_F8 = 5
         HOTKEY_TEXT_CTRL_SHIFT_Q = 6
         HOTKEY_TEXT_CTRL_ALT_Q = 7
+        HOTKEY_COPYONLY = 8
+        HOTKEY_COPYONLY = 8
         MOD_NONE = 0x0000
         MOD_ALT = 0x0001
         MOD_CTRL = 0x0002
@@ -1496,31 +1681,121 @@ class NoteAssistantApp:
 
         user32 = ctypes.windll.user32
 
+        def _string_to_mod_vk(keystr):
+            """Convert a simple key string like 'F10' or 'Ctrl+F8' into (mods, vk, label).
+            This supports Ctrl, Alt, Shift prefixes and simple keys used in this app.
+            """
+            MOD_CTRL = 0x0002
+            MOD_ALT = 0x0001
+            MOD_SHIFT = 0x0004
+
+            s = keystr or ''
+            s = s.strip()
+            mods = 0
+            parts = s.split('+')
+            key = parts[-1]
+            prefixes = parts[:-1]
+            for p in prefixes:
+                pp = p.lower()
+                if pp == 'ctrl':
+                    mods |= MOD_CTRL
+                elif pp == 'alt':
+                    mods |= MOD_ALT
+                elif pp in ('shift', 'sh'):
+                    mods |= MOD_SHIFT
+
+            vk_map = {
+                '`': 0xC0,
+                'F8': 0x77,
+                'F9': 0x78,
+                'F10': 0x79,
+                'F1': 0x70,
+                'F2': 0x71,
+                'F3': 0x72,
+                'F4': 0x73,
+                'F5': 0x74,
+                'F6': 0x75,
+                'F7': 0x76,
+                'Q': 0x51,
+                'C': 0x43,
+            }
+            key_upper = key.upper()
+            vk = vk_map.get(key_upper, None)
+            if vk is None:
+                # Try if single char
+                if len(key_upper) == 1:
+                    vk = ord(key_upper)
+            return mods, vk, s
+
         def listener():
             if not user32.RegisterHotKey(None, HOTKEY_TOGGLE, MOD_NONE, VK_F9):
                 return
             if not user32.RegisterHotKey(None, HOTKEY_QUIT, MOD_CTRL | MOD_SHIFT, VK_F9):
                 user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
                 return
+            # Register hotkeys according to config
+            # Toggle
+            try:
+                toggle_key = self._hotkeys_config.get('toggle', 'F9')
+            except Exception:
+                toggle_key = 'F9'
+            mods, vk, label = _string_to_mod_vk(toggle_key)
+            if vk is None or not user32.RegisterHotKey(None, HOTKEY_TOGGLE, mods, vk):
+                # fallback to F9 no-mod
+                user32.RegisterHotKey(None, HOTKEY_TOGGLE, MOD_NONE, VK_F9)
 
-            user32.RegisterHotKey(None, HOTKEY_SNIP, MOD_NONE, VK_F10)
+            # Quit (keep Ctrl+Shift+F9 as before)
+            user32.RegisterHotKey(None, HOTKEY_QUIT, MOD_CTRL | MOD_SHIFT, VK_F9)
 
-            text_hotkey_candidates = [
-                (HOTKEY_TEXT_BACKTICK, MOD_NONE, VK_BACKTICK, '`'),
-                (HOTKEY_TEXT_F8, MOD_NONE, VK_F8, 'F8'),
-                (HOTKEY_TEXT_CTRL_SHIFT_Q, MOD_CTRL | MOD_SHIFT, VK_Q, 'Ctrl+Shift+Q'),
-                (HOTKEY_TEXT_CTRL_ALT_Q, MOD_CTRL | MOD_ALT, VK_Q, 'Ctrl+Alt+Q'),
-            ]
+            # Copy-only toggle (local) — always available
+            try:
+                copy_key = self._hotkeys_config.get('copyonly', 'Ctrl+F8')
+            except Exception:
+                copy_key = 'Ctrl+F8'
+            mods, vk, label = _string_to_mod_vk(copy_key)
+            if vk:
+                try:
+                    user32.RegisterHotKey(None, HOTKEY_COPYONLY, mods, vk)
+                except Exception:
+                    pass
+
+            # Snip hotkey only if API available
+            api_ok = bool(self.proxy_url or self.anthropic_client or self.gemini_model)
+            if api_ok:
+                try:
+                    snip_key = self._hotkeys_config.get('snip', 'F10')
+                except Exception:
+                    snip_key = 'F10'
+                mods, vk, label = _string_to_mod_vk(snip_key)
+                if vk:
+                    user32.RegisterHotKey(None, HOTKEY_SNIP, mods, vk)
+
+            # Text hotkeys (for text->AI) only if API available
             active_text_hotkeys = []
-            for hotkey_id, mods, vk, label in text_hotkey_candidates:
-                if user32.RegisterHotKey(None, hotkey_id, mods, vk):
-                    active_text_hotkeys.append(label)
+            if api_ok:
+                text_list = self._hotkeys_config.get('text_hotkeys', ['`', 'F8', 'Ctrl+Shift+Q', 'Ctrl+Alt+Q'])
+                candidate_ids = [HOTKEY_TEXT_BACKTICK, HOTKEY_TEXT_F8, HOTKEY_TEXT_CTRL_SHIFT_Q, HOTKEY_TEXT_CTRL_ALT_Q]
+                for i, keystr in enumerate(text_list):
+                    if i >= len(candidate_ids):
+                        break
+                    hid = candidate_ids[i]
+                    mods, vk, label = _string_to_mod_vk(keystr)
+                    if vk and user32.RegisterHotKey(None, hid, mods, vk):
+                        active_text_hotkeys.append(keystr)
 
             if active_text_hotkeys:
                 joined = ', '.join(active_text_hotkeys)
                 self.root.after(0, lambda j=joined: self.status.config(text=f'Text hotkeys active: {j}'))
             else:
-                self.root.after(0, lambda: self.status.config(text='Failed to register text hotkey'))
+                # Don't warn when API not available
+                if api_ok:
+                    self.root.after(0, lambda: self.status.config(text='Failed to register text hotkey'))
+
+            # Register Ctrl+F8 for toggling Copy Only (hide text) mode
+            try:
+                user32.RegisterHotKey(None, HOTKEY_COPYONLY, MOD_CTRL, VK_F8)
+            except Exception:
+                pass
 
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -1539,6 +1814,9 @@ class NoteAssistantApp:
                     ):
                         # Delay avoids racing the hotkey key-up and focus handoff.
                         self.root.after(120, self._stealth_text)
+                    elif msg.wParam == HOTKEY_COPYONLY:
+                        # Toggle copy-only (hide text) stealth mode
+                        self.root.after(0, self._toggle_copy_only)
 
             user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
             user32.UnregisterHotKey(None, HOTKEY_QUIT)
@@ -1547,6 +1825,10 @@ class NoteAssistantApp:
             user32.UnregisterHotKey(None, HOTKEY_TEXT_F8)
             user32.UnregisterHotKey(None, HOTKEY_TEXT_CTRL_SHIFT_Q)
             user32.UnregisterHotKey(None, HOTKEY_TEXT_CTRL_ALT_Q)
+            try:
+                user32.UnregisterHotKey(None, HOTKEY_COPYONLY)
+            except Exception:
+                pass
 
         t = threading.Thread(target=listener, daemon=True)
         t.start()
@@ -1632,6 +1914,14 @@ class NoteAssistantApp:
         if snip_size in ('10', '11', '12', '13', '14', '16', '18'):
             self.snip_size_var.set(snip_size)
         self.snip_hide_text_var.set(bool(cfg.get('snip_hide_text', False)))
+        # Hotkeys
+        hk = cfg.get('hotkeys', {}) or {}
+        self._hotkeys_config = {
+            'toggle': hk.get('toggle', 'F9'),
+            'snip': hk.get('snip', 'F10'),
+            'copyonly': hk.get('copyonly', 'Ctrl+F8'),
+            'text_hotkeys': hk.get('text_hotkeys', ['`', 'F8', 'Ctrl+Shift+Q', 'Ctrl+Alt+Q'])
+        }
 
         # API settings from config (override env vars)
         if 'proxy_url' in cfg:
@@ -1641,6 +1931,7 @@ class NoteAssistantApp:
         self._claude_api_key = cfg.get('claude_api_key', '') or ''
         self._gemini_api_key = cfg.get('gemini_api_key', '') or ''
         self._init_api_clients()
+        self._apply_api_ui_visibility()
 
     def save_config(self):
         cfg = {
@@ -1655,6 +1946,7 @@ class NoteAssistantApp:
             'snip_font_family': self.snip_font_var.get(),
             'snip_font_size': self.snip_size_var.get(),
             'snip_hide_text': bool(self.snip_hide_text_var.get()),
+            'hotkeys': self._hotkeys_config,
             'proxy_url': self.proxy_url,
             'proxy_key': self.proxy_key,
             'claude_api_key': self._claude_api_key,
