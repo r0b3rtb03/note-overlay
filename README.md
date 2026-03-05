@@ -70,3 +70,28 @@ python note_assistant.py
 ```bash
 pyinstaller note_assistant.spec --distpath . --noconfirm
 ```
+
+## Hotkeys & Config
+
+- Hotkeys are configurable from the app: click the **Hotkeys** button (toolbar) to open the Hotkey Settings dialog.
+- Hotkey mappings and other settings are saved to the config file: [dist/note_assistant_config.json](dist/note_assistant_config.json).
+- The JSON `hotkeys` key contains `toggle`, `snip`, `copyonly`, and `text_hotkeys` entries.
+- Default copy-only toggle: `Ctrl+F8` (can be changed in Hotkey Settings).
+
+## Building & Auto-rebuild
+
+- A PowerShell helper is provided to rebuild the EXE: [scripts/build_exe.ps1](scripts/build_exe.ps1).
+	- Run it with PowerShell: `powershell -ExecutionPolicy Bypass -File .\scripts\build_exe.ps1`
+- To automatically rebuild when source changes, run the watcher script: [scripts/watch_and_build.ps1](scripts/watch_and_build.ps1).
+	- Start it with PowerShell and leave it running: `powershell -ExecutionPolicy Bypass -File .\scripts\watch_and_build.ps1`
+
+## API Diagnostics & UI behavior
+
+- Use **API → Diagnostics** to view whether proxy/Claude/Gemini keys are set and whether clients initialized.
+- AI-reliant UI (snip, text hotkeys) is automatically disabled when no API keys are configured. The copy-only toggle remains available locally.
+
+## Dev notes
+
+- App entry: [note_assistant.py](note_assistant.py).
+- Config path (runtime): the app stores its config next to the EXE in `dist/note_assistant_config.json`.
+- If you change hotkeys in the UI, the app saves them to config; restart the app to apply global hotkey changes.
