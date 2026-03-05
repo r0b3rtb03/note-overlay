@@ -2,3 +2,5 @@ pystray==0.19.5
 Pillow>=9.0.0
 anthropic>=0.40.0
 python-dotenv>=1.0.0
+google-generativeai>=0.8.0
+pyinstaller>=6.0.0
