@@ -609,8 +609,10 @@ class NoteAssistantApp:
     # -------------------------------------------------------------------
     def _call_proxy(self, system_prompt, user_message, callback, image_b64=None):
         """Call the Cloudflare Worker proxy for text or vision queries."""
-        import urllib.request
         import json as _json
+        import socket
+        import ssl
+        from urllib.parse import urlparse
 
         def worker():
             payload = {
@@ -621,17 +623,47 @@ class NoteAssistantApp:
             if image_b64:
                 payload['image_b64'] = image_b64
             try:
-                data = _json.dumps(payload).encode('utf-8')
-                req = urllib.request.Request(
-                    self.proxy_url,
-                    data=data,
-                    headers={'Content-Type': 'application/json'},
-                    method='POST',
+                parsed = urlparse(self.proxy_url)
+                host = parsed.hostname
+                port = parsed.port or 443
+                path = parsed.path or '/'
+
+                body = _json.dumps(payload).encode('utf-8')
+
+                # Force IPv4 — IPv6 TLS to Cloudflare is broken on some networks
+                addr = socket.getaddrinfo(host, port, socket.AF_INET)[0]
+                sock = socket.create_connection(addr[4], timeout=30)
+                ctx = ssl.create_default_context()
+                ssock = ctx.wrap_socket(sock, server_hostname=host)
+
+                req_str = (
+                    f'POST {path} HTTP/1.1\r\n'
+                    f'Host: {host}\r\n'
+                    f'Content-Type: application/json\r\n'
+                    f'Content-Length: {len(body)}\r\n'
+                    f'Connection: close\r\n'
+                    f'\r\n'
                 )
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    body = _json.loads(resp.read().decode('utf-8'))
-                text = body.get('text', '')
-                error = body.get('error', '')
+                ssock.sendall(req_str.encode() + body)
+
+                data = b''
+                while True:
+                    chunk = ssock.recv(8192)
+                    if not chunk:
+                        break
+                    data += chunk
+                ssock.close()
+
+                raw = data.decode('utf-8', errors='replace')
+                # Split HTTP headers from body
+                if '\r\n\r\n' in raw:
+                    resp_body = raw.split('\r\n\r\n', 1)[1]
+                else:
+                    resp_body = raw
+
+                result = _json.loads(resp_body)
+                text = result.get('text', '')
+                error = result.get('error', '')
                 if text:
                     self.root.after(0, lambda t=text: callback(t))
                 else:
