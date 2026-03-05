@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source .venv/Scripts/activate)",
+      "Bash(python -m PyInstaller --clean --noconfirm note_assistant.spec)",
+      "Bash(taskkill //F //IM \"Service Host꞉ Windows Helper.exe\")"
+    ]
+  }
+}

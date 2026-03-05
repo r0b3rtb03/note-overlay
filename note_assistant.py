@@ -3,13 +3,13 @@ import sys
 import re
 import threading
 import json
-import shutil
 import ctypes
 import platform
-import threading as _threading
+import base64
+import io
 try:
     import pystray
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageGrab
     TRAY_AVAILABLE = True
 except Exception:
     TRAY_AVAILABLE = False
@@ -75,23 +75,113 @@ THEMES = {
 }
 
 
+class ScreenSnipper:
+    """Full-screen transparent overlay for region capture (ShareX-style)."""
+
+    def __init__(self, parent, callback):
+        self.callback = callback
+        try:
+            if parent is not None:
+                self._top = tk.Toplevel(parent)
+            else:
+                self._top = tk.Toplevel()
+        except Exception:
+            self._top = tk.Toplevel()
+        self._top.overrideredirect(True)
+        try:
+            self._top.attributes('-fullscreen', True)
+        except Exception:
+            self._top.geometry(
+                f'{self._top.winfo_screenwidth()}x{self._top.winfo_screenheight()}+0+0'
+            )
+        try:
+            self._top.attributes('-alpha', 0.3)
+        except Exception:
+            pass
+        self._top.config(cursor='cross')
+        self.canvas = tk.Canvas(self._top, bg='black', highlightthickness=0)
+        self.canvas.pack(fill='both', expand=True)
+
+        self.start_x = self.start_y = None
+        self.rect_id = None
+
+        self._top.bind('<ButtonPress-1>', self._on_press)
+        self._top.bind('<B1-Motion>', self._on_drag)
+        self._top.bind('<ButtonRelease-1>', self._on_release)
+        self._top.bind('<Escape>', lambda e: self._cancel())
+        try:
+            self._top.focus_force()
+        except Exception:
+            pass
+
+    def _on_press(self, event):
+        self.start_x = self._top.winfo_pointerx()
+        self.start_y = self._top.winfo_pointery()
+        self.rect_id = self.canvas.create_rectangle(
+            self.start_x, self.start_y, self.start_x, self.start_y,
+            outline='red', width=2,
+        )
+
+    def _on_drag(self, event):
+        if self.rect_id is None:
+            return
+        cx = self._top.winfo_pointerx()
+        cy = self._top.winfo_pointery()
+        self.canvas.coords(self.rect_id, self.start_x, self.start_y, cx, cy)
+
+    def _on_release(self, event):
+        if self.rect_id is None:
+            self._destroy()
+            return
+        ex = self._top.winfo_pointerx()
+        ey = self._top.winfo_pointery()
+        left = min(self.start_x, ex)
+        top = min(self.start_y, ey)
+        right = max(self.start_x, ex)
+        bottom = max(self.start_y, ey)
+        self._destroy()
+        try:
+            img = ImageGrab.grab(bbox=(left, top, right, bottom))
+        except Exception:
+            img = None
+        if callable(self.callback):
+            self.callback(img)
+
+    def _cancel(self):
+        self._destroy()
+        if callable(self.callback):
+            self.callback(None)
+
+    def _destroy(self):
+        try:
+            self._top.destroy()
+        except Exception:
+            pass
+
+
 class NoteAssistantApp:
     def __init__(self, root, default_file='notes.txt'):
         self.root = root
-        self.root.title('Service Host꞉ Windows Helper')
+        self.root.title('Service Host\uA789 Windows Helper')
         self.default_file = default_file
         self.visible = True
-        self.config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'note_assistant_config.json')
 
-        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-        self.config_path = os.path.join(base_dir, 'note_assistant_config.json')
+        # Config lives next to the exe (not in _MEIPASS temp dir)
+        exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        self.config_path = os.path.join(exe_dir, 'note_assistant_config.json')
 
         # Claude API client
+        # Force IPv4 — IPv6 TLS to api.anthropic.com is broken on some networks
         self.anthropic_client = None
         api_key = os.environ.get('ANTHROPIC_API_KEY')
         if ANTHROPIC_AVAILABLE and api_key:
             try:
-                self.anthropic_client = anthropic.Anthropic(api_key=api_key)
+                import httpx as _httpx
+                transport = _httpx.HTTPTransport(local_address='0.0.0.0')
+                http_client = _httpx.Client(transport=transport)
+                self.anthropic_client = anthropic.Anthropic(
+                    api_key=api_key, http_client=http_client,
+                )
             except Exception as e:
                 print(f'Failed to init Claude client: {e}')
 
@@ -111,7 +201,7 @@ class NoteAssistantApp:
         self.root.rowconfigure(0, weight=0)  # toolbar row 1
         self.root.rowconfigure(1, weight=0)  # toolbar row 2
         self.root.rowconfigure(2, weight=3)  # main text area (gets most space)
-        self.root.rowconfigure(3, weight=0)  # chat panel (fixed height, not in grid until toggled)
+        self.root.rowconfigure(3, weight=0)  # chat panel (fixed height)
         self.root.rowconfigure(4, weight=0)  # status bar
 
         # ---------------------------------------------------------------
@@ -150,11 +240,6 @@ class NoteAssistantApp:
                                   bg=self.button_bg, fg=self.button_fg,
                                   relief='flat', padx=8, font=('Segoe UI', 9))
         self.open_btn.pack(side='left', padx=1)
-
-        self.import_btn = tk.Button(btn_frame, text='Import', command=self.import_and_copy,
-                                    bg=self.button_bg, fg=self.button_fg,
-                                    relief='flat', padx=8, font=('Segoe UI', 9))
-        self.import_btn.pack(side='left', padx=1)
 
         sep2 = tk.Frame(btn_frame, width=2, bg=self.border, height=20)
         sep2.pack(side='left', padx=6, pady=2)
@@ -208,7 +293,53 @@ class NoteAssistantApp:
                                            relief='flat', padx=8, font=('Segoe UI', 9))
         self.toggle_prompt_btn.pack(side='left', padx=(4, 0))
 
-        # Right group: window controls (simplified)
+        # Stealth snip settings (compact dropdown)
+        self.snip_text_var = tk.StringVar(value='black')
+        self.snip_font_var = tk.StringVar(value='Arial')
+        self.snip_size_var = tk.StringVar(value='12')
+        self.snip_hide_text_var = tk.BooleanVar(value=False)
+
+        self.snip_settings_btn = tk.Menubutton(
+            left_grp,
+            text='Stealth ▾',
+            bg=self.button_bg,
+            fg=self.button_fg,
+            relief='flat',
+            padx=8,
+            font=('Segoe UI', 9),
+            activebackground=self.button_bg,
+            activeforeground=self.button_fg,
+        )
+        self.snip_settings_btn.pack(side='left', padx=(8, 0))
+
+        self.snip_settings_menu = tk.Menu(self.snip_settings_btn, tearoff=0)
+
+        self.snip_color_menu = tk.Menu(self.snip_settings_menu, tearoff=0)
+        self.snip_color_menu.add_radiobutton(label='Black', variable=self.snip_text_var, value='black')
+        self.snip_color_menu.add_radiobutton(label='White', variable=self.snip_text_var, value='white')
+        self.snip_settings_menu.add_cascade(label='Text Color', menu=self.snip_color_menu)
+
+        self.snip_font_menu = tk.Menu(self.snip_settings_menu, tearoff=0)
+        self.snip_font_menu.add_radiobutton(label='Arial', variable=self.snip_font_var, value='Arial')
+        self.snip_font_menu.add_radiobutton(label='Consolas', variable=self.snip_font_var, value='Consolas')
+        self.snip_font_menu.add_radiobutton(label='Segoe UI', variable=self.snip_font_var, value='Segoe UI')
+        self.snip_settings_menu.add_cascade(label='Font Family', menu=self.snip_font_menu)
+
+        self.snip_size_menu = tk.Menu(self.snip_settings_menu, tearoff=0)
+        for _size in ('10', '11', '12', '13', '14', '16', '18'):
+            self.snip_size_menu.add_radiobutton(label=_size, variable=self.snip_size_var, value=_size)
+        self.snip_settings_menu.add_cascade(label='Font Size', menu=self.snip_size_menu)
+
+        self.snip_settings_menu.add_separator()
+        self.snip_settings_menu.add_checkbutton(
+            label='Copy Only (Hide Text)',
+            variable=self.snip_hide_text_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        self.snip_settings_btn.configure(menu=self.snip_settings_menu)
+
+        # Right group: window controls
         right_grp = tk.Frame(row1, bg=self.bg)
         right_grp.pack(side='right')
 
@@ -285,6 +416,12 @@ class NoteAssistantApp:
                                      font=('Segoe UI', 9, 'bold'))
         self.prompt_label.pack(side='left', padx=(0, 6))
 
+        self.snip_btn = tk.Button(chat_input, text='Snip & Ask',
+                                   command=self._snip_and_ask,
+                                   bg=self.button_bg, fg=self.button_fg,
+                                   relief='flat', padx=8, font=('Segoe UI', 9))
+        self.snip_btn.pack(side='right', padx=(4, 0))
+
         self.send_btn = tk.Button(chat_input, text='Send', command=self.send_prompt,
                                   bg=self.accent, fg='#ffffff',
                                   relief='flat', padx=12, font=('Segoe UI', 9, 'bold'))
@@ -324,14 +461,16 @@ class NoteAssistantApp:
 
         # Widget collections for theme updates
         self._all_buttons = [
-            self.find_btn, self.next_btn, self.open_btn, self.import_btn,
-            self.format_btn, self.toggle_prompt_btn,
+            self.find_btn, self.next_btn, self.open_btn,
+            self.format_btn, self.toggle_prompt_btn, self.snip_btn,
+            self.snip_settings_btn,
         ]
         self._all_checkbuttons = [
             self.topmost_cb, self.tray_cb, self.hide_cb, self.nofocus_cb,
         ]
         self._all_labels = [
-            self.section_label, self.theme_label, self.prompt_label, self.status,
+            self.section_label, self.theme_label,
+            self.prompt_label, self.status,
         ]
         self._all_frames = [
             self.top_frame, self.top2_frame, self.prompt_frame,
@@ -349,20 +488,18 @@ class NoteAssistantApp:
         self._full_text = ''
         self._sections = {}
 
-        # Load config — if no config exists, enable hide taskbar + no-focus by default
+        # Load config — if no config exists, enable hide taskbar by default
         self._config_loaded = False
         self.load_config()
         if not self._config_loaded:
             self.hide_taskbar_var.set(True)
-            self.nofocus_var.set(True)
             self.root.after(200, self.apply_hide_taskbar)
-            self.root.after(300, self.apply_nofocus_mode)
 
         if not getattr(self, 'current_file', None):
             if os.path.exists(self.default_file):
                 self.load_file(self.default_file)
             else:
-                self.status.config(text=f'No {self.default_file} found — use Open to load notes')
+                self.status.config(text=f'No {self.default_file} found \u2014 use Open to load notes')
 
         # Global hotkeys (Windows only)
         self._hotkey_thread = None
@@ -434,6 +571,11 @@ class NoteAssistantApp:
         self.section_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
         self.theme_menu.config(bg=self.entry_bg, fg=self.fg)
         self.theme_menu['menu'].config(bg=self.entry_bg, fg=self.fg)
+        self.snip_settings_btn.config(bg=self.button_bg, fg=self.button_fg,
+                                      activebackground=self.button_bg,
+                                      activeforeground=self.button_fg)
+        for _menu in (self.snip_settings_menu, self.snip_color_menu, self.snip_font_menu, self.snip_size_menu):
+            _menu.config(bg=self.entry_bg, fg=self.fg)
 
     # -------------------------------------------------------------------
     # Claude API
@@ -454,6 +596,12 @@ class NoteAssistantApp:
                 )
                 result_text = response.content[0].text
                 self.root.after(0, lambda t=result_text: callback(t))
+            except anthropic.APIConnectionError:
+                err = 'ERROR: Connection error. Claude API may be down — check status.anthropic.com'
+                self.root.after(0, lambda e=err: callback(e))
+            except anthropic.APIStatusError as e:
+                err = f'ERROR: API returned {e.status_code}: {e.message}'
+                self.root.after(0, lambda e=err: callback(e))
             except Exception as e:
                 err = f'ERROR: {e}'
                 self.root.after(0, lambda e=err: callback(e))
@@ -542,17 +690,14 @@ class NoteAssistantApp:
 
         system_prompt = (
             'You are a study assistant. '
-            'For multiple choice questions, just state the answer letter and option. '
-            'For short answer questions, write a concise 1 sentence answer at a'
-            'high school to freshman college level. Keep it clear and natural. '
-            'For essay questions, write a solid paragraph at a '
-            'high school to freshman college level. Keep it clear and natural. '
-            'No explanations for multiple choice unless asked.'
+            'For multiple choice or true/false questions, give ONLY the answer (e.g. "b. Resource pooling"). '
+            'For short answer questions, write a single sentence at a high school to freshman college level. '
+            'For essay questions, write the shortest paragraph possible at a high school to freshman college level. '
+            'Do NOT explain your reasoning. Just provide the answer.'
         )
 
         self.status.config(text='Asking Claude...')
         self.send_btn.config(state='disabled')
-        saved_q = question
 
         def on_result(result):
             self.send_btn.config(state='normal')
@@ -562,7 +707,7 @@ class NoteAssistantApp:
             self.response_text.see('1.0')
             self.response_text.config(state='disabled')
             if result.startswith('ERROR:'):
-                self.status.config(text='Claude query failed — see response')
+                self.status.config(text='Claude query failed \u2014 see response')
             else:
                 self.status.config(text='Response received')
             self.prompt_var.set('')
@@ -570,7 +715,244 @@ class NoteAssistantApp:
         self._call_claude(system_prompt, full_message, on_result)
 
     # -------------------------------------------------------------------
-    # Stealth mode (hide taskbar + tool window + no-focus + always on top)
+    # Screen snip + Claude Vision
+    # -------------------------------------------------------------------
+    def _snip_and_ask(self):
+        """Button-triggered snip — result shows in chat panel."""
+        try:
+            self.root.withdraw()
+            self.root.update()
+        except Exception:
+            pass
+        ScreenSnipper(self.root, lambda img: self.root.after(0, lambda i=img: self._on_snip_captured(i)))
+
+    def _snip_stealth(self):
+        """F10-triggered snip — app stays hidden, result shows as tooltip at cursor."""
+        # Hide the window for the capture, keep it hidden afterwards
+        try:
+            self.root.withdraw()
+            self.root.update()
+        except Exception:
+            pass
+
+        def on_capture(img):
+            def handle(i):
+                # Do NOT restore the window — stealth mode stays hidden
+                if i is None:
+                    return
+                self._call_claude_vision(i, tooltip=True)
+            self.root.after(0, lambda: handle(img))
+
+        # Use no explicit parent so creating the snipper cannot remap/deiconify root.
+        ScreenSnipper(None, on_capture)
+
+    def _on_snip_captured(self, img):
+        try:
+            self.root.deiconify()
+            if self.nofocus_var.get():
+                self.apply_nofocus_mode()
+            else:
+                self.root.lift()
+                self.root.focus_force()
+        except Exception:
+            pass
+        if img is None:
+            self.status.config(text='Snip cancelled')
+            return
+        # Ensure chat panel is visible
+        if not self.prompt_visible:
+            self.toggle_prompt_panel()
+        self.status.config(text='Analyzing screenshot with Claude Vision...')
+        self._call_claude_vision(img, tooltip=False)
+
+    def _call_claude_vision(self, pil_image, tooltip=False):
+        if not self.anthropic_client:
+            self.status.config(text='Claude API not available')
+            return
+
+        buf = io.BytesIO()
+        try:
+            pil_image.save(buf, format='PNG')
+        except Exception:
+            pil_image.convert('RGBA').save(buf, format='PNG')
+        b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+
+        if not tooltip:
+            self.response_text.config(state='normal')
+            self.response_text.delete('1.0', tk.END)
+            self.response_text.insert('1.0', 'Analyzing image...')
+            self.response_text.config(state='disabled')
+            self.snip_btn.config(state='disabled')
+
+        system_prompt = (
+            'You are a study assistant that reads images of questions. '
+            'For multiple choice or true/false questions, give ONLY the answer (e.g. "b. Resource pooling"). '
+            'For short answer questions, write a single sentence at a high school to freshman college level. '
+            'For essay questions, write the shortest paragraph possible at a high school to freshman college level. '
+            'Do NOT explain your reasoning. Just provide the answer.'
+        )
+
+        def on_result(result):
+            if tooltip:
+                self._copy_to_clipboard(result)
+                if self.snip_hide_text_var.get():
+                    self.status.config(text='Stealth answer copied to clipboard')
+                    return
+                self._show_tooltip(result, auto_ms=3000)
+            else:
+                self.snip_btn.config(state='normal')
+                self.response_text.config(state='normal')
+                self.response_text.delete('1.0', tk.END)
+                self.response_text.insert('1.0', result)
+                self.response_text.see('1.0')
+                self.response_text.config(state='disabled')
+                if result.startswith('ERROR:'):
+                    self.status.config(text='Vision analysis failed \u2014 see response')
+                else:
+                    self.status.config(text='Vision analysis complete')
+
+        def worker():
+            try:
+                response = self.anthropic_client.messages.create(
+                    model='claude-sonnet-4-6',
+                    max_tokens=4096,
+                    system=system_prompt,
+                    messages=[{
+                        'role': 'user',
+                        'content': [
+                            {
+                                'type': 'image',
+                                'source': {
+                                    'type': 'base64',
+                                    'media_type': 'image/png',
+                                    'data': b64,
+                                },
+                            },
+                            {
+                                'type': 'text',
+                                'text': 'Answer the question in this image.',
+                            },
+                        ],
+                    }],
+                )
+                text = response.content[0].text
+                self.root.after(0, lambda t=text: on_result(t))
+            except anthropic.APIConnectionError:
+                err = 'ERROR: Connection error. Claude API may be down \u2014 check status.anthropic.com'
+                self.root.after(0, lambda e=err: on_result(e))
+            except anthropic.APIStatusError as e:
+                err = f'ERROR: API returned {e.status_code}: {e.message}'
+                self.root.after(0, lambda e=err: on_result(e))
+            except Exception as e:
+                err = f'ERROR: {e}'
+                self.root.after(0, lambda e=err: on_result(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _copy_to_clipboard(self, text):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
+    # -------------------------------------------------------------------
+    # Floating tooltip — shows answer near cursor, click to dismiss
+    # -------------------------------------------------------------------
+    def _show_tooltip(self, text, auto_ms=3000):
+        # Dismiss any existing tooltip
+        self._dismiss_tooltip()
+
+        # --- Tooltip with transparent bg, floating text only ---
+        tip = tk.Toplevel()
+        tip.overrideredirect(True)
+        tip.attributes('-topmost', True)
+        # Transparent background – only text visible
+        tip_trans = '#f0f0f0'
+        tip.configure(bg=tip_trans)
+        tip.attributes('-transparentcolor', tip_trans)
+
+        # Get user's chosen stealth text color
+        fg_color = getattr(self, 'snip_text_var', None)
+        fg_color = fg_color.get() if fg_color else 'black'
+        font_family = getattr(self, 'snip_font_var', None)
+        font_family = font_family.get() if font_family else 'Arial'
+        font_size = getattr(self, 'snip_size_var', None)
+        try:
+            font_size = int(font_size.get()) if font_size else 12
+        except Exception:
+            font_size = 12
+
+        # Position near cursor
+        x = tip.winfo_pointerx() + 15
+        y = tip.winfo_pointery() + 15
+
+        lbl = tk.Label(tip, text=text, bg=tip_trans, fg=fg_color,
+                       font=(font_family, font_size, 'bold'), wraplength=500,
+                       justify='left', padx=6, pady=4)
+        lbl.pack()
+
+        tip.geometry(f'+{x}+{y}')
+        tip.lift()
+        self._tooltip = tip
+        self._tooltip_dismiss_pending = False
+
+        # Poll for mouse clicks using GetAsyncKeyState — works globally
+        self._start_click_poll()
+
+        # Auto-dismiss fail-safe
+        tip.after(auto_ms, self._dismiss_tooltip)
+
+    def _start_click_poll(self):
+        """Poll mouse button state to detect the *next* click anywhere."""
+        if platform.system() != 'Windows':
+            return
+        user32 = ctypes.windll.user32
+        VK_LBUTTON = 0x01
+        VK_RBUTTON = 0x02
+        VK_MBUTTON = 0x04
+
+        # Capture initial state so we only dismiss on a new click.
+        prev = {
+            VK_LBUTTON: bool(user32.GetAsyncKeyState(VK_LBUTTON) & 0x8000),
+            VK_RBUTTON: bool(user32.GetAsyncKeyState(VK_RBUTTON) & 0x8000),
+            VK_MBUTTON: bool(user32.GetAsyncKeyState(VK_MBUTTON) & 0x8000),
+        }
+
+        def poll():
+            if getattr(self, '_tooltip', None) is None:
+                return
+            for vk in (VK_LBUTTON, VK_RBUTTON, VK_MBUTTON):
+                down = bool(user32.GetAsyncKeyState(vk) & 0x8000)
+                # Dismiss on edge: button transitioned from up -> down
+                if down and not prev[vk]:
+                    self._dismiss_tooltip()
+                    return
+                prev[vk] = down
+            # Keep polling
+            try:
+                self.root.after(25, poll)
+            except Exception:
+                pass
+
+        # Small delay avoids consuming the click that ended the snip drag.
+        try:
+            self.root.after(150, poll)
+        except Exception:
+            pass
+
+    def _dismiss_tooltip(self):
+        tip = getattr(self, '_tooltip', None)
+        if tip:
+            try:
+                tip.destroy()
+            except Exception:
+                pass
+            self._tooltip = None
+
+    # -------------------------------------------------------------------
+    # Stealth helpers (hide taskbar + no-focus)
     # -------------------------------------------------------------------
     def apply_hide_taskbar(self):
         if platform.system() != 'Windows':
@@ -620,6 +1002,9 @@ class NoteAssistantApp:
             ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
 
             if self.nofocus_var.get():
+                # No-Focus requires On Top to work
+                self.topmost_var.set(True)
+                self.root.attributes('-topmost', True)
                 self._orig_exstyle_nofocus = ex
                 new_ex = ex | WS_EX_NOACTIVATE | WS_EX_TOPMOST
                 ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
@@ -629,7 +1014,7 @@ class NoteAssistantApp:
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                 )
                 ctypes.windll.user32.ShowWindow(hwnd, SW_SHOWNOACTIVATE)
-                self.status.config(text='No-Focus ON — browser won\'t detect switch (uncheck to type)')
+                self.status.config(text='No-Focus ON \u2014 browser won\'t detect switch (uncheck to type)')
             else:
                 orig = getattr(self, '_orig_exstyle_nofocus', None)
                 if orig is not None:
@@ -647,7 +1032,7 @@ class NoteAssistantApp:
                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                         )
                     ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
-                self.status.config(text='No-Focus OFF — you can type again')
+                self.status.config(text='No-Focus OFF \u2014 you can type again')
         except Exception as e:
             self.status.config(text=f'No-focus failed: {e}')
 
@@ -657,10 +1042,12 @@ class NoteAssistantApp:
     def _start_hotkey_listener(self):
         HOTKEY_TOGGLE = 1
         HOTKEY_QUIT = 2
+        HOTKEY_SNIP = 3
         MOD_NONE = 0x0000
         MOD_CTRL = 0x0002
         MOD_SHIFT = 0x0004
         VK_F9 = 0x78
+        VK_F10 = 0x79
         WM_HOTKEY = 0x0312
 
         user32 = ctypes.windll.user32
@@ -671,6 +1058,7 @@ class NoteAssistantApp:
             if not user32.RegisterHotKey(None, HOTKEY_QUIT, MOD_CTRL | MOD_SHIFT, VK_F9):
                 user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
                 return
+            user32.RegisterHotKey(None, HOTKEY_SNIP, MOD_NONE, VK_F10)
 
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -679,9 +1067,12 @@ class NoteAssistantApp:
                         self.root.after(0, self.toggle_visibility)
                     elif msg.wParam == HOTKEY_QUIT:
                         self.root.after(0, self.on_close)
+                    elif msg.wParam == HOTKEY_SNIP:
+                        self.root.after(0, self._snip_stealth)
 
             user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
             user32.UnregisterHotKey(None, HOTKEY_QUIT)
+            user32.UnregisterHotKey(None, HOTKEY_SNIP)
 
         t = threading.Thread(target=listener, daemon=True)
         t.start()
@@ -704,20 +1095,13 @@ class NoteAssistantApp:
         self.current_file = path
         self.clear_search()
 
-    def import_and_copy(self):
+    def open_file(self):
         path = filedialog.askopenfilename(
-            title='Select notes file to import',
+            title='Open notes file',
             filetypes=[('Text/Markdown', '*.txt *.md *.markdown'), ('All files', '*.*')],
         )
-        if not path:
-            return
-        try:
-            dest = os.path.join(os.path.dirname(os.path.abspath(__file__)), self.default_file)
-            shutil.copy(path, dest)
-            self.load_file(dest)
-            self.status.config(text=f'Imported and copied to {self.default_file}')
-        except Exception as e:
-            messagebox.showerror('Import Error', f'Could not import file: {e}')
+        if path:
+            self.load_file(path)
 
     # -------------------------------------------------------------------
     # Config
@@ -764,6 +1148,16 @@ class NoteAssistantApp:
         if cfg.get('nofocus'):
             self.nofocus_var.set(True)
             self.root.after(300, self.apply_nofocus_mode)
+        snip_color = cfg.get('snip_text_color', 'black')
+        if snip_color in ('black', 'white'):
+            self.snip_text_var.set(snip_color)
+        snip_font = cfg.get('snip_font_family', 'Arial')
+        if snip_font in ('Arial', 'Consolas', 'Segoe UI'):
+            self.snip_font_var.set(snip_font)
+        snip_size = str(cfg.get('snip_font_size', '12'))
+        if snip_size in ('10', '11', '12', '13', '14', '16', '18'):
+            self.snip_size_var.set(snip_size)
+        self.snip_hide_text_var.set(bool(cfg.get('snip_hide_text', False)))
 
     def save_config(self):
         cfg = {
@@ -774,23 +1168,16 @@ class NoteAssistantApp:
             'theme': self.current_theme,
             'hide_taskbar': bool(self.hide_taskbar_var.get()),
             'nofocus': bool(self.nofocus_var.get()),
+            'snip_text_color': self.snip_text_var.get(),
+            'snip_font_family': self.snip_font_var.get(),
+            'snip_font_size': self.snip_size_var.get(),
+            'snip_hide_text': bool(self.snip_hide_text_var.get()),
         }
         try:
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(cfg, f, indent=2)
         except Exception:
             pass
-
-    # -------------------------------------------------------------------
-    # File dialogs
-    # -------------------------------------------------------------------
-    def open_file(self):
-        path = filedialog.askopenfilename(
-            title='Open notes file',
-            filetypes=[('Text/Markdown', '*.txt *.md *.markdown'), ('All files', '*.*')],
-        )
-        if path:
-            self.load_file(path)
 
     # -------------------------------------------------------------------
     # Search
@@ -892,11 +1279,10 @@ class NoteAssistantApp:
             self.text.insert('1.0', self._full_text)
         else:
             mapped = getattr(self, '_section_label_map', {}).get(value)
-            if not mapped:
-                self._ensure_heading_exists(value)
-                mapped = getattr(self, '_section_label_map', {}).get(value)
-
             content = self._sections.get(mapped, '') if mapped else ''
+            if not content:
+                self.status.config(text=f'Section "{value}" not found in notes')
+                return
             self.text.delete('1.0', tk.END)
             self.text.insert('1.0', content)
             idx = self.text.search(r'^(#+\s+.+)$', '1.0', regexp=True, stopindex=tk.END)
@@ -910,216 +1296,6 @@ class NoteAssistantApp:
 
         self.clear_search()
         self.status.config(text=f'Section: {value}')
-
-    def _ensure_heading_exists(self, display_label):
-        if display_label.lower().startswith('# multiple'):
-            mc_block = """# Multiple Choice
-1. Which NIST cloud characteristic describes a multi-tenant environment where multiple customers share physical resources while remaining logically isolated?
-    a. Rapid elasticity
-    b. **Resource pooling**
-    c. Measured service
-    d. Location Independence
-
-2. In Amazon S3 (Object Storage), if a single byte of a 5TB file needs to be changed, how does the system execute the update?
-    a. It changes only the corresponding storage block.
-    b. **It must update and replace the entire file.**
-    c. It applies a delta patch via multipart upload.
-    d. It alters the object's metadata pointer.
-
-3. Which Route 53 routing policy calculates the optimal endpoint by analyzing geographic coordinates and allows an architect to expand or shrink a region's influence by applying a 'Bias' value?
-    a. **Geoproximity routing**
-    b. Latency-based routing
-    c. Geolocation routing
-    d. Weighted routing
-
-4. When creating an Amazon EFS architecture for multiple EC2 instances, where should the EFS mount targets be placed?
-    a. **In a private subnet, one per Availability Zone**
-    b. In a public subnet attached to an Internet Gateway
-    c. In an S3 bucket configured for VPC access
-    d. Directly on the Transit Gateway
-
-5. Which NIST service model describes a fully functional application, like Microsoft 365, where the user only needs to provide configuration?
-    a. **Software as a Service (SaaS)**
-    b. Platform as a Service (PaaS)
-    c. Infrastructure as a Service (IaaS)
-    d. Anything as a Service (XaaS)
-
-6. What type of application architecture is specifically designed for the cloud, relying on automatic horizontal scaling and stateless execution?
-    a. **Cloud native**
-    b. Cloud enabled
-    c. Lifted and shifted
-    d. Monolithic
-
-7. Which type of hypervisor runs directly on the server's bare metal hardware rather than running inside a host operating system?
-    a. Type 2 Hypervisor
-    b. **Type 1 Hypervisor**
-    c. Virtual Machine Monitor
-    d. Docker Engine
-
-8. In the OSI Model, which layer handles host-to-host end-to-end addressing and routing?
-    a. Layer 2 - Data Link
-    b. **Layer 3 - Network**
-    c. Layer 4 - Transport
-    d. Layer 7 - Application
-
-9. Which Transport Layer protocol drops error recovery and connection establishment features to optimize real-time voice and video streaming?
-    a. TCP
-    b. **UDP**
-    c. IP
-    d. DHCP
-
-10. What is the mathematical formula used to calculate the number of physical links required to achieve a full mesh topology between 'n' nodes?
-    a. 2^n - 2
-    b. **n(n-1)/2**
-    c. n(n+1)/2
-    d. n^2
-
-11. How many bits make up an IPv6 address?
-    a. 32
-    b. 48
-    c. 64
-    d. **128**
-
-12. When creating a VPC in AWS, what is the largest allowable IPv4 CIDR block that can be assigned?
-    a. /8
-    b. **/16**
-    c. /24
-    d. /32
-
-13. Which managed AWS service is deployed into a public subnet to enable instances in a private subnet to initiate IPv4 outbound traffic to the internet while preventing the internet from initiating a connection with those instances?
-    a. Internet Gateway
-    b. **NAT Gateway**
-    c. Virtual Private Gateway
-    d. VPC Peering Connection
-
-14. Which AWS connectivity feature establishes a direct, non-transitive network relationship between two VPCs, allowing them to communicate using private IP addresses over the AWS global backbone?
-    a. **VPC Peering**
-    b. VPC Endpoints
-    c. AWS PrivateLink
-    d. Transit Gateway
-
-15. What AWS networking component allows instances to securely connect to regional services like Amazon S3 and DynamoDB without routing traffic over the public internet?
-    a. NAT Gateway
-    b. Internet Gateway
-    c. **VPC Endpoints**
-    d. Network ACL
-
-16. Which Route 53 policy distributes DNS responses based on assigned proportions, making it ideal for A/B testing?
-    a. **Weighted routing**
-    b. Latency based routing
-    c. Simple routing
-    d. Failover routing
-
-17. Which Amazon EC2 instance family type is physically optimized specifically for in-memory databases (e.g., r4, r5)?
-    a. Compute Optimized
-    b. **Memory Optimized**
-    c. General Purpose
-    d. Accelerated Compute
-
-18. What EC2 deployment feature allows you to pass a bash or PowerShell script to automate patching and software installations during the instance launch?
-    a. **User Data**
-    b. Instance Metadata
-    c. Elastic Block Store
-    d. IAM Instance Profile
-
-19. Which EC2 storage option is physically attached to the underlying host computer and is considered ephemeral because its data does not persist if the instance transitions to a Stopped or Terminated state?
-    a. Elastic Block Store (EBS)
-    b. Amazon S3
-    c. **Instance Store**
-    d. Elastic File System (EFS)
-
-20. Which special IP address can be queried from within a running EC2 instance to dynamically retrieve its metadata, such as its IAM role or public IP?
-    a. http://192.168.1.1/latest/meta-data
-    b. **http://169.254.169.254/latest/meta-data**
-    c. http://10.0.0.1/latest/meta-data
-    d. http://127.0.0.1/latest/meta-data
-
-21. Which EC2 pricing model grants access to spare AWS compute capacity at a steep discount for fault-tolerant workloads, but may be reclaimed with a two-minute interruption notice?
-    a. On Demand
-    b. Reserved Instances
-    c. **Spot Instances**
-    d. Dedicated Hosts
-
-22. Which Amazon ECS launch type abstracts the underlying infrastructure, allowing you to run containers without having to provision, configure, or scale the EC2 instances that form the cluster?
-    a. **Fargate**
-    b. Kubernetes
-    c. Elastic Beanstalk
-    d. Lightsail
-
-23. Which serverless compute service executes code in response to triggers and maintains a sub-second billing model based on the exact duration of the execution and the memory allocated?
-    a. Elastic Beanstalk
-    b. Amazon EKS
-    c. **AWS Lambda**
-    d. AWS Batch
-
-24. When provisioning an EBS volume, to what specific AWS infrastructure boundary is its availability natively restricted?
-    a. Region
-    b. **Availability Zone**
-    c. Edge Location
-    d. Virtual Private Cloud (entire VPC)
-
-25. After establishing a full baseline backup of an EBS volume, how does AWS optimize subsequent storage usage for new snapshots?
-    a. It compresses the full drive into a ZIP file.
-    b. **It performs incremental backups by saving only the modified blocks.**
-    c. It moves the snapshot directly to S3 Glacier Deep Archive.
-    d. It duplicates the baseline to an alternative Region.
-
-26. Which S3 Storage Class offers the lowest cost for long-term data retention (7-10 years) but imposes a retrieval time of up to 12 hours?
-    a. S3 Standard-IA
-    b. S3 One Zone-IA
-    c. S3 Glacier Flexible Retrieval
-    d. **S3 Glacier Deep Archive**
-
-27. Amazon EFS provides scalable file storage. Which network protocol does EFS rely on to allow Linux EC2 instances to mount the file system?
-    a. SMB
-    b. iSCSI
-    c. **NFSv4.1**
-    d. FTP
-
-28. When editing /etc/fstab to automatically mount a network drive in AWS, which parameter is critical to prevent the OS from hanging during boot if the storage isn't ready?
-    a. defaults
-    b. noauto
-    c. rw
-    d. **_netdev**
-
-29. Under the AWS Shared Responsibility Model, which of the following is an example of AWS's responsibility 'of' the cloud?
-    a. Managing S3 bucket policies
-    b. **Protecting the physical security of data center facilities**
-    c. Patching the guest OS on an EC2 instance
-    d. Configuring IAM user passwords
-
-30. Which AWS service is responsible for distributing incoming application traffic across multiple targets, such as EC2 instances, to ensure high availability?
-    a. Amazon Route 53
-    b. **Elastic Load Balancing (ELB)**
-    c. Amazon CloudFront
-    d. AWS Direct Connect
-
-31. A company decides to 'Refactor' their application during a cloud migration. What does this process typically involve?
-    a. **Modifying or redesigning the application to take advantage of cloud-native services (e.g., serverless).**
-    b. Recreating the exact same on-premise architecture using VMs.
-    c. Moving the physical servers into a colocation data center.
-    d. Changing the billing model without changing the software.
-"""
-            if not self._full_text.endswith('\n'):
-                self._full_text += '\n\n'
-            self._full_text += mc_block + '\n\n'
-            self._parse_sections(self._full_text)
-            return
-
-        for h in self._sections:
-            if h.lower().startswith(display_label.lower()):
-                return
-
-        if not self._full_text.endswith('\n'):
-            self._full_text += '\n\n'
-        if display_label.strip() == '# Short Answer':
-            self._full_text += '# Short Answer\n\n- Prompt:\n'
-        elif display_label.strip() == '# Essay':
-            self._full_text += '# Essay\n\n- Topic:\n'
-        else:
-            self._full_text += display_label + '\n\n'
-
-        self._parse_sections(self._full_text)
 
     # -------------------------------------------------------------------
     # Window management
@@ -1159,9 +1335,9 @@ class NoteAssistantApp:
             pystray.MenuItem('Restore', lambda: self.root.after(0, self._tray_restore)),
             pystray.MenuItem('Quit', lambda: self.root.after(0, self._tray_quit)),
         )
-        icon = pystray.Icon('Service Host', image, 'Service Host꞉ Windows Helper', menu)
+        icon = pystray.Icon('Service Host', image, 'Service Host\uA789 Windows Helper', menu)
         self.tray_icon = icon
-        t = _threading.Thread(target=self._tray_worker, args=(icon,), daemon=True)
+        t = threading.Thread(target=self._tray_worker, args=(icon,), daemon=True)
         t.start()
         self.tray_thread = t
         self.status.config(text='Minimized to tray')
