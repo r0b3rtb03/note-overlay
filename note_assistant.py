@@ -178,33 +178,12 @@ class NoteAssistantApp:
         # Proxy mode — single URL + key replaces direct API clients
         self.proxy_url = os.environ.get('PROXY_URL', '').rstrip('/')
         self.proxy_key = os.environ.get('PROXY_KEY', '')
-
-        # Claude API client
-        # Force IPv4 — IPv6 TLS to api.anthropic.com is broken on some networks
+        self._claude_api_key = ''
+        self._gemini_api_key = ''
         self.anthropic_client = None
-        api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if not self.proxy_url and ANTHROPIC_AVAILABLE and api_key:
-            try:
-                import httpx as _httpx
-                transport = _httpx.HTTPTransport(local_address='0.0.0.0')
-                http_client = _httpx.Client(transport=transport)
-                self.anthropic_client = anthropic.Anthropic(
-                    api_key=api_key, http_client=http_client,
-                )
-            except Exception as e:
-                print(f'Failed to init Claude client: {e}')
-
-        # Gemini API client (fallback)
         self.gemini_model = None
         self.gemini_vision_model = None
-        gemini_key = os.environ.get('GEMINI_API_KEY')
-        if not self.proxy_url and GEMINI_AVAILABLE and gemini_key and gemini_key != 'YOUR_GEMINI_KEY_HERE':
-            try:
-                genai.configure(api_key=gemini_key)
-                self.gemini_model = genai.GenerativeModel('gemini-2.0-flash')
-                self.gemini_vision_model = genai.GenerativeModel('gemini-2.0-flash')
-            except Exception as e:
-                print(f'Failed to init Gemini client: {e}')
+        self._init_api_clients()
 
         # Window size and appearance
         self.root.geometry('800x500')
@@ -313,6 +292,12 @@ class NoteAssistantApp:
                                            bg=self.button_bg, fg=self.button_fg,
                                            relief='flat', padx=8, font=('Segoe UI', 9))
         self.toggle_prompt_btn.pack(side='left', padx=(4, 0))
+
+        self.api_settings_btn = tk.Button(left_grp, text='API',
+                                          command=self._show_api_settings,
+                                          bg=self.button_bg, fg=self.button_fg,
+                                          relief='flat', padx=8, font=('Segoe UI', 9))
+        self.api_settings_btn.pack(side='left', padx=(4, 0))
 
         # Stealth snip settings (compact dropdown)
         self.snip_text_var = tk.StringVar(value='black')
@@ -484,13 +469,13 @@ class NoteAssistantApp:
             if apis:
                 self.status.config(text=f'AI ready: {" + ".join(apis)}' + (' (Gemini fallback)' if len(apis) == 2 else ''))
             else:
-                self.status.config(text='No AI API configured — set PROXY_URL or API keys in .env')
+                self.status.config(text='No AI API configured — use API Settings or set keys in .env')
 
         # Widget collections for theme updates
         self._all_buttons = [
             self.find_btn, self.next_btn, self.open_btn,
-            self.format_btn, self.toggle_prompt_btn, self.snip_btn,
-            self.snip_settings_btn,
+            self.format_btn, self.toggle_prompt_btn, self.api_settings_btn,
+            self.snip_btn, self.snip_settings_btn,
         ]
         self._all_checkbuttons = [
             self.topmost_cb, self.tray_cb, self.hide_cb, self.nofocus_cb,
@@ -521,6 +506,7 @@ class NoteAssistantApp:
         if not self._config_loaded:
             self.hide_taskbar_var.set(True)
             self.root.after(200, self.apply_hide_taskbar)
+        self._update_api_status()
 
         if not getattr(self, 'current_file', None):
             if os.path.exists(self.default_file):
@@ -603,6 +589,113 @@ class NoteAssistantApp:
                                       activeforeground=self.button_fg)
         for _menu in (self.snip_settings_menu, self.snip_color_menu, self.snip_font_menu, self.snip_size_menu):
             _menu.config(bg=self.entry_bg, fg=self.fg)
+
+    # -------------------------------------------------------------------
+    # AI API client initialization
+    # -------------------------------------------------------------------
+    def _init_api_clients(self):
+        """Initialize API clients from config keys, env vars, or proxy settings."""
+        self.anthropic_client = None
+        self.gemini_model = None
+        self.gemini_vision_model = None
+
+        if self.proxy_url:
+            return
+
+        # Claude direct API — Force IPv4 (IPv6 TLS broken on some networks)
+        api_key = self._claude_api_key or os.environ.get('ANTHROPIC_API_KEY', '')
+        if ANTHROPIC_AVAILABLE and api_key:
+            try:
+                import httpx as _httpx
+                transport = _httpx.HTTPTransport(local_address='0.0.0.0')
+                http_client = _httpx.Client(transport=transport)
+                self.anthropic_client = anthropic.Anthropic(
+                    api_key=api_key, http_client=http_client,
+                )
+            except Exception as e:
+                print(f'Failed to init Claude client: {e}')
+
+        # Gemini direct API (fallback)
+        gemini_key = self._gemini_api_key or os.environ.get('GEMINI_API_KEY', '')
+        if GEMINI_AVAILABLE and gemini_key and gemini_key != 'YOUR_GEMINI_KEY_HERE':
+            try:
+                genai.configure(api_key=gemini_key)
+                self.gemini_model = genai.GenerativeModel('gemini-2.0-flash')
+                self.gemini_vision_model = genai.GenerativeModel('gemini-2.0-flash')
+            except Exception as e:
+                print(f'Failed to init Gemini client: {e}')
+
+    def _update_api_status(self):
+        """Refresh the status bar with current API mode."""
+        if self.proxy_url:
+            self.status.config(text='AI ready: Proxy mode')
+        else:
+            apis = []
+            if self.anthropic_client:
+                apis.append('Claude')
+            if self.gemini_model:
+                apis.append('Gemini')
+            if apis:
+                self.status.config(text=f'AI ready: {" + ".join(apis)}'
+                                   + (' (Gemini fallback)' if len(apis) == 2 else ''))
+            else:
+                self.status.config(text='No AI API configured — use API Settings or set keys in .env')
+
+    def _show_api_settings(self):
+        """Open a dialog to configure proxy or direct API keys."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title('API Settings')
+        dlg.geometry('480x300')
+        dlg.configure(bg=self.bg)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        tk.Label(dlg, text='API Configuration', bg=self.bg, fg=self.fg,
+                 font=('Segoe UI', 11, 'bold')).pack(pady=(12, 4))
+        tk.Label(dlg, text='Set Proxy URL to use proxy mode, or leave it empty\n'
+                          'and set API keys for direct mode.',
+                 bg=self.bg, fg=self.fg, font=('Segoe UI', 9)).pack(pady=(0, 8))
+
+        fields_frame = tk.Frame(dlg, bg=self.bg)
+        fields_frame.pack(fill='x', padx=20)
+
+        entries = {}
+        for label, key, default, masked in [
+            ('Proxy URL:', 'proxy_url', self.proxy_url, False),
+            ('Proxy Key:', 'proxy_key', self.proxy_key, True),
+            ('Claude API Key:', 'claude_api_key', self._claude_api_key, True),
+            ('Gemini API Key:', 'gemini_api_key', self._gemini_api_key, True),
+        ]:
+            row = tk.Frame(fields_frame, bg=self.bg)
+            row.pack(fill='x', pady=3)
+            tk.Label(row, text=label, bg=self.bg, fg=self.fg, width=15,
+                     anchor='e', font=('Segoe UI', 9)).pack(side='left')
+            e = tk.Entry(row, bg=self.entry_bg, fg=self.fg,
+                         insertbackground=self.fg, relief='flat',
+                         font=('Segoe UI', 9), show='*' if masked else '')
+            e.pack(side='left', fill='x', expand=True, padx=(6, 0))
+            e.insert(0, default or '')
+            entries[key] = e
+
+        def save():
+            self.proxy_url = entries['proxy_url'].get().strip().rstrip('/')
+            self.proxy_key = entries['proxy_key'].get().strip()
+            self._claude_api_key = entries['claude_api_key'].get().strip()
+            self._gemini_api_key = entries['gemini_api_key'].get().strip()
+            self._init_api_clients()
+            self._update_api_status()
+            self.save_config()
+            dlg.destroy()
+
+        btn_frame = tk.Frame(dlg, bg=self.bg)
+        btn_frame.pack(pady=12)
+        tk.Button(btn_frame, text='Save', command=save,
+                  bg=self.accent, fg='#ffffff', relief='flat', padx=16,
+                  font=('Segoe UI', 9, 'bold')).pack(side='left', padx=4)
+        tk.Button(btn_frame, text='Cancel', command=dlg.destroy,
+                  bg=self.button_bg, fg=self.button_fg, relief='flat', padx=16,
+                  font=('Segoe UI', 9)).pack(side='left', padx=4)
 
     # -------------------------------------------------------------------
     # AI API calls (proxy mode + direct mode)
@@ -1518,6 +1611,15 @@ class NoteAssistantApp:
             self.snip_size_var.set(snip_size)
         self.snip_hide_text_var.set(bool(cfg.get('snip_hide_text', False)))
 
+        # API settings from config (override env vars)
+        if 'proxy_url' in cfg:
+            self.proxy_url = (cfg['proxy_url'] or '').rstrip('/')
+        if 'proxy_key' in cfg:
+            self.proxy_key = cfg['proxy_key'] or ''
+        self._claude_api_key = cfg.get('claude_api_key', '') or ''
+        self._gemini_api_key = cfg.get('gemini_api_key', '') or ''
+        self._init_api_clients()
+
     def save_config(self):
         cfg = {
             'geometry': self.root.winfo_geometry(),
@@ -1531,6 +1633,10 @@ class NoteAssistantApp:
             'snip_font_family': self.snip_font_var.get(),
             'snip_font_size': self.snip_size_var.get(),
             'snip_hide_text': bool(self.snip_hide_text_var.get()),
+            'proxy_url': self.proxy_url,
+            'proxy_key': self.proxy_key,
+            'claude_api_key': self._claude_api_key,
+            'gemini_api_key': self._gemini_api_key,
         }
         try:
             with open(self.config_path, 'w', encoding='utf-8') as f:
