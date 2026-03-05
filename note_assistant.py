@@ -27,6 +27,11 @@ try:
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     ANTHROPIC_AVAILABLE = False
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from ctypes import wintypes
@@ -184,6 +189,18 @@ class NoteAssistantApp:
                 )
             except Exception as e:
                 print(f'Failed to init Claude client: {e}')
+
+        # Gemini API client (fallback)
+        self.gemini_model = None
+        self.gemini_vision_model = None
+        gemini_key = os.environ.get('GEMINI_API_KEY')
+        if GEMINI_AVAILABLE and gemini_key and gemini_key != 'YOUR_GEMINI_KEY_HERE':
+            try:
+                genai.configure(api_key=gemini_key)
+                self.gemini_model = genai.GenerativeModel('gemini-2.0-flash')
+                self.gemini_vision_model = genai.GenerativeModel('gemini-2.0-flash')
+            except Exception as e:
+                print(f'Failed to init Gemini client: {e}')
 
         # Window size and appearance
         self.root.geometry('800x500')
@@ -452,12 +469,15 @@ class NoteAssistantApp:
         self.status.grid(row=4, column=0, sticky='ew', padx=8, pady=(0, 4))
 
         # Show API status at startup
+        apis = []
         if self.anthropic_client:
-            self.status.config(text='Claude API ready')
-        elif ANTHROPIC_AVAILABLE:
-            self.status.config(text='Claude API: no API key found in .env')
+            apis.append('Claude')
+        if self.gemini_model:
+            apis.append('Gemini')
+        if apis:
+            self.status.config(text=f'AI ready: {" + ".join(apis)}' + (' (Gemini fallback)' if len(apis) == 2 else ''))
         else:
-            self.status.config(text='Claude API: anthropic package not installed')
+            self.status.config(text='No AI API configured — set ANTHROPIC_API_KEY or GEMINI_API_KEY in .env')
 
         # Widget collections for theme updates
         self._all_buttons = [
@@ -580,10 +600,31 @@ class NoteAssistantApp:
     # -------------------------------------------------------------------
     # Claude API
     # -------------------------------------------------------------------
+    def _call_gemini(self, system_prompt, user_message, callback):
+        """Fallback: call Gemini API for text queries."""
+        if not self.gemini_model:
+            callback('ERROR: No AI API available.\n\nSet ANTHROPIC_API_KEY or GEMINI_API_KEY in .env')
+            return
+
+        def worker():
+            try:
+                combined = f'{system_prompt}\n\n{user_message}'
+                response = self.gemini_model.generate_content(combined)
+                result_text = response.text
+                self.root.after(0, lambda t=result_text: callback(t))
+            except Exception as e:
+                err = f'ERROR (Gemini): {e}'
+                self.root.after(0, lambda e=err: callback(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _call_claude(self, system_prompt, user_message, callback,
                      model='claude-sonnet-4-6'):
+        if not self.anthropic_client and not self.gemini_model:
+            callback('ERROR: No AI API available.\n\nSet ANTHROPIC_API_KEY or GEMINI_API_KEY in .env')
+            return
         if not self.anthropic_client:
-            callback('ERROR: Claude API not available.\n\nMake sure your .env file has ANTHROPIC_API_KEY set and the anthropic package is installed.')
+            self._call_gemini(system_prompt, user_message, callback)
             return
 
         def worker():
@@ -596,15 +637,19 @@ class NoteAssistantApp:
                 )
                 result_text = response.content[0].text
                 self.root.after(0, lambda t=result_text: callback(t))
-            except anthropic.APIConnectionError:
-                err = 'ERROR: Connection error. Claude API may be down — check status.anthropic.com'
-                self.root.after(0, lambda e=err: callback(e))
-            except anthropic.APIStatusError as e:
-                err = f'ERROR: API returned {e.status_code}: {e.message}'
-                self.root.after(0, lambda e=err: callback(e))
+            except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
+                # Claude failed — try Gemini fallback
+                if self.gemini_model:
+                    self.root.after(0, lambda: self._call_gemini(system_prompt, user_message, callback))
+                else:
+                    err = f'ERROR: Claude failed: {e}'
+                    self.root.after(0, lambda e=err: callback(e))
             except Exception as e:
-                err = f'ERROR: {e}'
-                self.root.after(0, lambda e=err: callback(e))
+                if self.gemini_model:
+                    self.root.after(0, lambda: self._call_gemini(system_prompt, user_message, callback))
+                else:
+                    err = f'ERROR: {e}'
+                    self.root.after(0, lambda e=err: callback(e))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -726,6 +771,156 @@ class NoteAssistantApp:
             pass
         ScreenSnipper(self.root, lambda img: self.root.after(0, lambda i=img: self._on_snip_captured(i)))
 
+    def _stealth_text(self):
+        """Text-hotkey triggered — grab highlighted text, send to Claude, show answer like stealth snip."""
+        if not self.anthropic_client and not self.gemini_model:
+            self.status.config(text='No AI API available')
+            return
+
+        import time
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        original_hwnd = user32.GetForegroundWindow()
+
+        # ---- All blocking work runs in a background thread ----
+        def _background():
+            # Set up proper ctypes prototypes (64-bit safe)
+            _OpenClipboard = user32.OpenClipboard
+            _OpenClipboard.argtypes = [wintypes.HWND]
+            _OpenClipboard.restype = wintypes.BOOL
+
+            _CloseClipboard = user32.CloseClipboard
+            _CloseClipboard.argtypes = []
+            _CloseClipboard.restype = wintypes.BOOL
+
+            _GetClipboardData = user32.GetClipboardData
+            _GetClipboardData.argtypes = [wintypes.UINT]
+            _GetClipboardData.restype = ctypes.c_void_p
+
+            _GlobalLock = kernel32.GlobalLock
+            _GlobalLock.argtypes = [ctypes.c_void_p]
+            _GlobalLock.restype = ctypes.c_void_p
+
+            _GlobalUnlock = kernel32.GlobalUnlock
+            _GlobalUnlock.argtypes = [ctypes.c_void_p]
+            _GlobalUnlock.restype = wintypes.BOOL
+
+            def _read_clipboard_win32():
+                """Read clipboard via Win32 API — works from any thread, no Tkinter needed."""
+                CF_UNICODETEXT = 13
+                # Retry OpenClipboard — may fail if source app still holds it
+                for _ in range(6):
+                    if _OpenClipboard(None):
+                        break
+                    time.sleep(0.03)
+                else:
+                    return ''
+                try:
+                    h = _GetClipboardData(CF_UNICODETEXT)
+                    if not h:
+                        return ''
+                    p = _GlobalLock(h)
+                    if not p:
+                        return ''
+                    try:
+                        return ctypes.wstring_at(p)
+                    finally:
+                        _GlobalUnlock(h)
+                finally:
+                    _CloseClipboard()
+
+            def _send_copy_combo(vk_key):
+                KEYEVENTF_KEYUP = 0x0002
+                INPUT_KEYBOARD = 1
+                VK_CONTROL = 0x11
+
+                class KEYBDINPUT(ctypes.Structure):
+                    _fields_ = [
+                        ('wVk', wintypes.WORD),
+                        ('wScan', wintypes.WORD),
+                        ('dwFlags', wintypes.DWORD),
+                        ('time', wintypes.DWORD),
+                        ('dwExtraInfo', ctypes.POINTER(ctypes.c_ulong)),
+                    ]
+
+                class INPUT(ctypes.Structure):
+                    _fields_ = [
+                        ('type', wintypes.DWORD),
+                        ('ki', KEYBDINPUT),
+                    ]
+
+                extra = ctypes.c_ulong(0)
+                inputs = (INPUT * 4)(
+                    INPUT(INPUT_KEYBOARD, KEYBDINPUT(VK_CONTROL, 0, 0, 0, ctypes.pointer(extra))),
+                    INPUT(INPUT_KEYBOARD, KEYBDINPUT(vk_key, 0, 0, 0, ctypes.pointer(extra))),
+                    INPUT(INPUT_KEYBOARD, KEYBDINPUT(vk_key, 0, KEYEVENTF_KEYUP, 0, ctypes.pointer(extra))),
+                    INPUT(INPUT_KEYBOARD, KEYBDINPUT(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0, ctypes.pointer(extra))),
+                )
+                sent = user32.SendInput(len(inputs), ctypes.byref(inputs), ctypes.sizeof(INPUT))
+                if sent != len(inputs):
+                    user32.keybd_event(VK_CONTROL, 0, 0, 0)
+                    user32.keybd_event(vk_key, 0, 0, 0)
+                    user32.keybd_event(vk_key, 0, KEYEVENTF_KEYUP, 0)
+                    user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+
+            def _capture_after_copy(vk_key, old_clip, timeout_s=1.0):
+                start_seq = user32.GetClipboardSequenceNumber()
+                _send_copy_combo(vk_key)
+                deadline = time.time() + timeout_s
+                while time.time() < deadline:
+                    if user32.GetClipboardSequenceNumber() != start_seq:
+                        time.sleep(0.02)
+                        text = _read_clipboard_win32()
+                        if text and text != old_clip:
+                            return text
+                    time.sleep(0.04)
+                return ''
+
+            # Small delay for hotkey key-up settle
+            time.sleep(0.06)
+
+            old_clip = _read_clipboard_win32()
+
+            VK_C = 0x43
+            VK_INSERT = 0x2D
+
+            selected = _capture_after_copy(VK_C, old_clip, timeout_s=1.0)
+
+            if not selected:
+                time.sleep(0.08)
+                selected = _capture_after_copy(VK_INSERT, old_clip, timeout_s=1.0)
+
+            if not selected:
+                time.sleep(0.10)
+                selected = _capture_after_copy(VK_C, old_clip, timeout_s=1.5)
+
+            # Deliver result back to main thread
+            self.root.after(0, lambda: _on_captured(selected))
+
+        def _on_captured(selected_text):
+            if not selected_text or not selected_text.strip():
+                self.status.config(text='No text selected — highlight text first')
+                return
+
+            system_prompt = (
+                'You are a study assistant that answers questions. '
+                'For multiple choice or true/false questions, give ONLY the answer (e.g. "b. Resource pooling"). '
+                'For short answer questions, write a single sentence at a high school to freshman college level. '
+                'For essay questions, write the shortest paragraph possible at a high school to freshman college level. '
+                'Do NOT explain your reasoning. Just provide the answer.'
+            )
+
+            def on_result(result):
+                self._copy_to_clipboard(result)
+                if self.snip_hide_text_var.get():
+                    self.status.config(text='Stealth answer copied to clipboard')
+                    return
+                self._show_tooltip(result, auto_ms=3000, keep_focus_hwnd=original_hwnd)
+
+            self._call_claude(system_prompt, selected_text.strip(), on_result)
+
+        threading.Thread(target=_background, daemon=True).start()
+
     def _snip_stealth(self):
         """F10-triggered snip — app stays hidden, result shows as tooltip at cursor."""
         # Hide the window for the capture, keep it hidden afterwards
@@ -766,8 +961,8 @@ class NoteAssistantApp:
         self._call_claude_vision(img, tooltip=False)
 
     def _call_claude_vision(self, pil_image, tooltip=False):
-        if not self.anthropic_client:
-            self.status.config(text='Claude API not available')
+        if not self.anthropic_client and not self.gemini_vision_model:
+            self.status.config(text='No AI API available for vision')
             return
 
         buf = io.BytesIO()
@@ -775,7 +970,8 @@ class NoteAssistantApp:
             pil_image.save(buf, format='PNG')
         except Exception:
             pil_image.convert('RGBA').save(buf, format='PNG')
-        b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+        img_bytes = buf.getvalue()
+        b64 = base64.b64encode(img_bytes).decode('ascii')
 
         if not tooltip:
             self.response_text.config(state='normal')
@@ -811,7 +1007,24 @@ class NoteAssistantApp:
                 else:
                     self.status.config(text='Vision analysis complete')
 
+        def gemini_vision_fallback():
+            try:
+                img_part = {
+                    'mime_type': 'image/png',
+                    'data': img_bytes,
+                }
+                prompt = system_prompt + '\n\nAnswer the question in this image.'
+                response = self.gemini_vision_model.generate_content([prompt, img_part])
+                text = response.text
+                self.root.after(0, lambda t=text: on_result(t))
+            except Exception as e:
+                err = f'ERROR (Gemini Vision): {e}'
+                self.root.after(0, lambda e=err: on_result(e))
+
         def worker():
+            if not self.anthropic_client:
+                gemini_vision_fallback()
+                return
             try:
                 response = self.anthropic_client.messages.create(
                     model='claude-sonnet-4-6',
@@ -837,15 +1050,18 @@ class NoteAssistantApp:
                 )
                 text = response.content[0].text
                 self.root.after(0, lambda t=text: on_result(t))
-            except anthropic.APIConnectionError:
-                err = 'ERROR: Connection error. Claude API may be down \u2014 check status.anthropic.com'
-                self.root.after(0, lambda e=err: on_result(e))
-            except anthropic.APIStatusError as e:
-                err = f'ERROR: API returned {e.status_code}: {e.message}'
-                self.root.after(0, lambda e=err: on_result(e))
-            except Exception as e:
-                err = f'ERROR: {e}'
-                self.root.after(0, lambda e=err: on_result(e))
+            except (anthropic.APIConnectionError, anthropic.APIStatusError):
+                if self.gemini_vision_model:
+                    gemini_vision_fallback()
+                else:
+                    err = 'ERROR: Claude API down and no Gemini fallback available'
+                    self.root.after(0, lambda e=err: on_result(e))
+            except Exception:
+                if self.gemini_vision_model:
+                    gemini_vision_fallback()
+                else:
+                    err = 'ERROR: Claude API failed and no Gemini fallback available'
+                    self.root.after(0, lambda e=err: on_result(e))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -860,7 +1076,7 @@ class NoteAssistantApp:
     # -------------------------------------------------------------------
     # Floating tooltip — shows answer near cursor, click to dismiss
     # -------------------------------------------------------------------
-    def _show_tooltip(self, text, auto_ms=3000):
+    def _show_tooltip(self, text, auto_ms=3000, keep_focus_hwnd=None):
         # Dismiss any existing tooltip
         self._dismiss_tooltip()
 
@@ -895,6 +1111,27 @@ class NoteAssistantApp:
 
         tip.geometry(f'+{x}+{y}')
         tip.lift()
+
+        if platform.system() == 'Windows':
+            try:
+                hwnd = tip.winfo_id()
+                GWL_EXSTYLE = -20
+                WS_EX_NOACTIVATE = 0x08000000
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_NOACTIVATE = 0x0010
+                HWND_TOPMOST = -1
+                ex = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE)
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                if keep_focus_hwnd:
+                    ctypes.windll.user32.SetForegroundWindow(keep_focus_hwnd)
+            except Exception:
+                pass
+
         self._tooltip = tip
         self._tooltip_dismiss_pending = False
 
@@ -1043,9 +1280,17 @@ class NoteAssistantApp:
         HOTKEY_TOGGLE = 1
         HOTKEY_QUIT = 2
         HOTKEY_SNIP = 3
+        HOTKEY_TEXT_BACKTICK = 4
+        HOTKEY_TEXT_F8 = 5
+        HOTKEY_TEXT_CTRL_SHIFT_Q = 6
+        HOTKEY_TEXT_CTRL_ALT_Q = 7
         MOD_NONE = 0x0000
+        MOD_ALT = 0x0001
         MOD_CTRL = 0x0002
         MOD_SHIFT = 0x0004
+        VK_BACKTICK = 0xC0  # VK_OEM_3 (`)
+        VK_F8 = 0x77
+        VK_Q = 0x51
         VK_F9 = 0x78
         VK_F10 = 0x79
         WM_HOTKEY = 0x0312
@@ -1058,7 +1303,25 @@ class NoteAssistantApp:
             if not user32.RegisterHotKey(None, HOTKEY_QUIT, MOD_CTRL | MOD_SHIFT, VK_F9):
                 user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
                 return
+
             user32.RegisterHotKey(None, HOTKEY_SNIP, MOD_NONE, VK_F10)
+
+            text_hotkey_candidates = [
+                (HOTKEY_TEXT_BACKTICK, MOD_NONE, VK_BACKTICK, '`'),
+                (HOTKEY_TEXT_F8, MOD_NONE, VK_F8, 'F8'),
+                (HOTKEY_TEXT_CTRL_SHIFT_Q, MOD_CTRL | MOD_SHIFT, VK_Q, 'Ctrl+Shift+Q'),
+                (HOTKEY_TEXT_CTRL_ALT_Q, MOD_CTRL | MOD_ALT, VK_Q, 'Ctrl+Alt+Q'),
+            ]
+            active_text_hotkeys = []
+            for hotkey_id, mods, vk, label in text_hotkey_candidates:
+                if user32.RegisterHotKey(None, hotkey_id, mods, vk):
+                    active_text_hotkeys.append(label)
+
+            if active_text_hotkeys:
+                joined = ', '.join(active_text_hotkeys)
+                self.root.after(0, lambda j=joined: self.status.config(text=f'Text hotkeys active: {j}'))
+            else:
+                self.root.after(0, lambda: self.status.config(text='Failed to register text hotkey'))
 
             msg = wintypes.MSG()
             while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
@@ -1069,10 +1332,22 @@ class NoteAssistantApp:
                         self.root.after(0, self.on_close)
                     elif msg.wParam == HOTKEY_SNIP:
                         self.root.after(0, self._snip_stealth)
+                    elif msg.wParam in (
+                        HOTKEY_TEXT_BACKTICK,
+                        HOTKEY_TEXT_F8,
+                        HOTKEY_TEXT_CTRL_SHIFT_Q,
+                        HOTKEY_TEXT_CTRL_ALT_Q,
+                    ):
+                        # Delay avoids racing the hotkey key-up and focus handoff.
+                        self.root.after(120, self._stealth_text)
 
             user32.UnregisterHotKey(None, HOTKEY_TOGGLE)
             user32.UnregisterHotKey(None, HOTKEY_QUIT)
             user32.UnregisterHotKey(None, HOTKEY_SNIP)
+            user32.UnregisterHotKey(None, HOTKEY_TEXT_BACKTICK)
+            user32.UnregisterHotKey(None, HOTKEY_TEXT_F8)
+            user32.UnregisterHotKey(None, HOTKEY_TEXT_CTRL_SHIFT_Q)
+            user32.UnregisterHotKey(None, HOTKEY_TEXT_CTRL_ALT_Q)
 
         t = threading.Thread(target=listener, daemon=True)
         t.start()
