@@ -866,13 +866,16 @@ class NoteAssistantApp:
             return (
                 'For multiple choice questions, assign letters A, B, C, D... to the answer '
                 'choices in the exact order they appear (first option = A, second = B, etc.) '
-                'even if the source does not show letters. Respond with ONLY the letter and '
-                'the answer text in the format "C. Negative". For true/false questions, '
-                'respond with just "True" or "False". '
+                'even if the source does not show letters. Respond with ONLY the single '
+                'uppercase letter of the correct choice and nothing else (e.g. "C"). '
+                'For true/false questions, respond with just "True" or "False". '
             )
         return (
-            'For multiple choice or true/false questions, give ONLY the answer '
-            '(e.g. "b. Resource pooling"). '
+            'For multiple choice questions, assign letters A, B, C, D... to the answer '
+            'choices in the exact order they appear (first option = A, second = B, etc.) '
+            'even if the source does not show letters. Respond with the letter followed '
+            'by the answer text in the format "C. Negative". '
+            'For true/false questions, respond with just "True" or "False". '
         )
 
     # -------------------------------------------------------------------
