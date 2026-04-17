@@ -189,6 +189,7 @@ class NoteAssistantApp:
                 "snip_font_family": "Arial",
                 "snip_font_size": "10",
                 "snip_hide_text": False,
+                "mc_letter_only": False,
                 "proxy_url": "",
                 "proxy_key": "",
                 "claude_api_key": "",
@@ -326,6 +327,7 @@ class NoteAssistantApp:
         self.snip_font_var = tk.StringVar(value='Arial')
         self.snip_size_var = tk.StringVar(value='12')
         self.snip_hide_text_var = tk.BooleanVar(value=False)
+        self.mc_letter_only_var = tk.BooleanVar(value=False)
 
         self.snip_settings_btn = tk.Menubutton(
             left_grp,
@@ -362,6 +364,12 @@ class NoteAssistantApp:
         self.snip_settings_menu.add_checkbutton(
             label='Copy Only (Hide Text)',
             variable=self.snip_hide_text_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        self.snip_settings_menu.add_checkbutton(
+            label='MC Letter Mode',
+            variable=self.mc_letter_only_var,
             onvalue=True,
             offvalue=False,
         )
@@ -719,6 +727,21 @@ class NoteAssistantApp:
                   bg=self.button_bg, fg=self.button_fg, relief='flat', padx=16,
                   font=('Segoe UI', 9)).pack(side='left', padx=4)
 
+    def _mc_instruction(self):
+        """Return the multiple-choice instruction line based on MC Letter Mode."""
+        if self.mc_letter_only_var.get():
+            return (
+                'For multiple choice questions, assign letters A, B, C, D... to the answer '
+                'choices in the exact order they appear (first option = A, second = B, etc.) '
+                'even if the source does not show letters. Respond with ONLY the letter and '
+                'the answer text in the format "C. Negative". For true/false questions, '
+                'respond with just "True" or "False". '
+            )
+        return (
+            'For multiple choice or true/false questions, give ONLY the answer '
+            '(e.g. "b. Resource pooling"). '
+        )
+
     # -------------------------------------------------------------------
     # AI API calls (proxy mode + direct mode)
     # -------------------------------------------------------------------
@@ -930,7 +953,7 @@ class NoteAssistantApp:
 
         system_prompt = (
             'You are a study assistant. '
-            'For multiple choice or true/false questions, give ONLY the answer (e.g. "b. Resource pooling"). '
+            + self._mc_instruction() +
             'For short answer questions, write a single sentence at a high school to freshman college level. '
             'For essay questions, write the shortest paragraph possible at a high school to freshman college level. '
             'Do NOT explain your reasoning. Just provide the answer.'
@@ -1089,17 +1112,41 @@ class NoteAssistantApp:
                 time.sleep(0.10)
                 selected = _capture_after_copy(VK_C, old_clip, timeout_s=1.5)
 
+            # Clipboard blocked — try Windows UI Automation (bypasses JS copy protection)
+            if not selected:
+                try:
+                    import subprocess
+                    ps_cmd = (
+                        'Add-Type -AssemblyName UIAutomationClient;'
+                        '$e=[System.Windows.Automation.AutomationElement]::FocusedElement;'
+                        'try{$tp=$e.GetCurrentPattern('
+                        '[System.Windows.Automation.TextPattern]::Pattern);'
+                        '$sr=$tp.GetSelection();$sr[0].GetText(-1)}catch{}'
+                    )
+                    result = subprocess.run(
+                        ['powershell', '-NoProfile', '-NonInteractive',
+                         '-Command', ps_cmd],
+                        capture_output=True, text=True, timeout=5,
+                        creationflags=0x08000000,  # CREATE_NO_WINDOW
+                    )
+                    uia_text = result.stdout.strip()
+                    if uia_text:
+                        selected = uia_text
+                except Exception:
+                    pass
+
             # Deliver result back to main thread
             self.root.after(0, lambda: _on_captured(selected))
 
         def _on_captured(selected_text):
             if not selected_text or not selected_text.strip():
-                self.status.config(text='No text selected — highlight text first')
+                self.status.config(text='Copy blocked — auto-capturing screen around cursor...')
+                self._stealth_auto_capture(original_hwnd)
                 return
 
             system_prompt = (
                 'You are a study assistant that answers questions. '
-                'For multiple choice or true/false questions, give ONLY the answer (e.g. "b. Resource pooling"). '
+                + self._mc_instruction() +
                 'For short answer questions, write a single sentence at a high school to freshman college level. '
                 'For essay questions, write the shortest paragraph possible at a high school to freshman college level. '
                 'Do NOT explain your reasoning. Just provide the answer.'
@@ -1136,6 +1183,48 @@ class NoteAssistantApp:
         # Use no explicit parent so creating the snipper cannot remap/deiconify root.
         ScreenSnipper(None, on_capture)
 
+    def _stealth_auto_capture(self, keep_focus_hwnd=None):
+        """Auto-capture a region around the cursor and send to vision AI."""
+        try:
+            user32 = ctypes.windll.user32
+            # Get cursor position
+            cx = user32.GetSystemMetrics(0)  # screen width
+            cy = user32.GetSystemMetrics(1)  # screen height
+
+            class POINT(ctypes.Structure):
+                _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
+
+            pt = POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            mx, my = pt.x, pt.y
+
+            # Capture a generous region around cursor (selected text is usually
+            # to the left/above the cursor since cursor sits at selection end)
+            pad_left = 600
+            pad_right = 200
+            pad_up = 150
+            pad_down = 100
+            left = max(0, mx - pad_left)
+            top = max(0, my - pad_up)
+            right = min(cx, mx + pad_right)
+            bottom = min(cy, my + pad_down)
+
+            img = ImageGrab.grab(bbox=(left, top, right, bottom))
+            self._call_claude_vision(img, tooltip=True, keep_focus_hwnd=keep_focus_hwnd)
+        except Exception:
+            # If auto-capture fails, fall back to manual snip
+            self.status.config(text='Auto-capture failed — draw a snip instead...')
+
+            def on_capture(img):
+                def handle(i):
+                    if i is None:
+                        self.status.config(text='Snip cancelled')
+                        return
+                    self._call_claude_vision(i, tooltip=True, keep_focus_hwnd=keep_focus_hwnd)
+                self.root.after(0, lambda: handle(img))
+
+            ScreenSnipper(None, on_capture)
+
     def _on_snip_captured(self, img):
         try:
             self.root.deiconify()
@@ -1155,7 +1244,7 @@ class NoteAssistantApp:
         self.status.config(text='Analyzing screenshot with Claude Vision...')
         self._call_claude_vision(img, tooltip=False)
 
-    def _call_claude_vision(self, pil_image, tooltip=False):
+    def _call_claude_vision(self, pil_image, tooltip=False, keep_focus_hwnd=None):
         if not self.proxy_url and not self.anthropic_client and not self.gemini_vision_model:
             self.status.config(text='No AI API available for vision')
             return
@@ -1177,7 +1266,7 @@ class NoteAssistantApp:
 
         system_prompt = (
             'You are a study assistant that reads images of questions. '
-            'For multiple choice or true/false questions, give ONLY the answer (e.g. "b. Resource pooling"). '
+            + self._mc_instruction() +
             'For short answer questions, write a single sentence at a high school to freshman college level. '
             'For essay questions, write the shortest paragraph possible at a high school to freshman college level. '
             'Do NOT explain your reasoning. Just provide the answer.'
@@ -1189,7 +1278,7 @@ class NoteAssistantApp:
                 if self.snip_hide_text_var.get():
                     self.status.config(text='Stealth answer copied to clipboard')
                     return
-                self._show_tooltip(result, auto_ms=3000)
+                self._show_tooltip(result, auto_ms=3000, keep_focus_hwnd=keep_focus_hwnd)
             else:
                 self.snip_btn.config(state='normal')
                 self.response_text.config(state='normal')
@@ -1632,6 +1721,7 @@ class NoteAssistantApp:
         if snip_size in ('10', '11', '12', '13', '14', '16', '18'):
             self.snip_size_var.set(snip_size)
         self.snip_hide_text_var.set(bool(cfg.get('snip_hide_text', False)))
+        self.mc_letter_only_var.set(bool(cfg.get('mc_letter_only', False)))
 
         # API settings from config (override env vars)
         if 'proxy_url' in cfg:
@@ -1655,6 +1745,7 @@ class NoteAssistantApp:
             'snip_font_family': self.snip_font_var.get(),
             'snip_font_size': self.snip_size_var.get(),
             'snip_hide_text': bool(self.snip_hide_text_var.get()),
+            'mc_letter_only': bool(self.mc_letter_only_var.get()),
             'proxy_url': self.proxy_url,
             'proxy_key': self.proxy_key,
             'claude_api_key': self._claude_api_key,

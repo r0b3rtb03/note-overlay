@@ -7,7 +7,8 @@
       "Bash(pyinstaller note_assistant.spec --distpath dist --noconfirm)",
       "Bash(where python)",
       "Bash(where python3)",
-      "Bash(pip show pyinstaller)"
+      "Bash(pip show pyinstaller)",
+      "Bash(powershell -Command \"\\(Get-Content 'c:/Users/rober/OneDrive/Documents/note-overlay/note_assistant.py'\\).Length\")"
     ]
   }
 }
