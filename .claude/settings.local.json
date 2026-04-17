@@ -8,7 +8,15 @@
       "Bash(where python)",
       "Bash(where python3)",
       "Bash(pip show pyinstaller)",
-      "Bash(powershell -Command \"\\(Get-Content 'c:/Users/rober/OneDrive/Documents/note-overlay/note_assistant.py'\\).Length\")"
+      "Bash(powershell -Command \"\\(Get-Content 'c:/Users/rober/OneDrive/Documents/note-overlay/note_assistant.py'\\).Length\")",
+      "Bash(.venv/Scripts/python.exe -c \"import ast; ast.parse\\(open\\('note_assistant.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/pyinstaller.exe WindowsHelper.spec --noconfirm)",
+      "Bash(.venv/Scripts/python.exe -c \"import shutil; shutil.copy2\\('dist/Service Host꞉ Windows Helper.exe', 'Service Host꞉ Windows Helper.exe'\\); print\\('Copied'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"import os; [print\\(repr\\(f\\)\\) for f in os.listdir\\('dist'\\)]\")",
+      "Bash(.venv/Scripts/python.exe -c \"import os, glob; print\\(glob.glob\\('*.exe'\\)\\); print\\(glob.glob\\('dist/*'\\)\\)\")",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c \"import glob; print\\(len\\(glob.glob\\('*.exe'\\)\\), glob.glob\\('*.exe'\\)\\); print\\(len\\(glob.glob\\('dist/*'\\)\\), glob.glob\\('dist/*'\\)\\)\")",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe -c \"import os, datetime; s=os.stat\\('Service Host\\\\ua789 Windows Helper.exe'\\); print\\('size:', s.st_size\\); print\\('mtime:', datetime.datetime.fromtimestamp\\(s.st_mtime\\)\\)\")",
+      "Bash(.venv/Scripts/pyinstaller.exe WindowsHelper.spec --noconfirm --distpath .)"
     ]
   }
 }

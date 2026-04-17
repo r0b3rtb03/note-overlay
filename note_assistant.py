@@ -189,16 +189,13 @@ class NoteAssistantApp:
                 "snip_font_family": "Arial",
                 "snip_font_size": "10",
                 "snip_hide_text": False,
-<<<<<<< HEAD
                 "mc_letter_only": False,
-=======
                 "hotkeys": {
                     "toggle": "F9",
                     "snip": "F10",
                     "copyonly": "Ctrl+F8",
                     "text_hotkeys": ["`", "F8", "Ctrl+Shift+Q", "Ctrl+Alt+Q"]
                 },
->>>>>>> 91fe57d08aa7be9285aab0d836be01c8eb3f8804
                 "proxy_url": "",
                 "proxy_key": "",
                 "claude_api_key": "",
@@ -2016,9 +2013,7 @@ class NoteAssistantApp:
         if snip_size in ('10', '11', '12', '13', '14', '16', '18'):
             self.snip_size_var.set(snip_size)
         self.snip_hide_text_var.set(bool(cfg.get('snip_hide_text', False)))
-<<<<<<< HEAD
         self.mc_letter_only_var.set(bool(cfg.get('mc_letter_only', False)))
-=======
         # Hotkeys
         hk = cfg.get('hotkeys', {}) or {}
         self._hotkeys_config = {
@@ -2027,7 +2022,6 @@ class NoteAssistantApp:
             'copyonly': hk.get('copyonly', 'Ctrl+F8'),
             'text_hotkeys': hk.get('text_hotkeys', ['`', 'F8', 'Ctrl+Shift+Q', 'Ctrl+Alt+Q'])
         }
->>>>>>> 91fe57d08aa7be9285aab0d836be01c8eb3f8804
 
         # API settings from config (override env vars)
         if 'proxy_url' in cfg:
@@ -2052,11 +2046,8 @@ class NoteAssistantApp:
             'snip_font_family': self.snip_font_var.get(),
             'snip_font_size': self.snip_size_var.get(),
             'snip_hide_text': bool(self.snip_hide_text_var.get()),
-<<<<<<< HEAD
             'mc_letter_only': bool(self.mc_letter_only_var.get()),
-=======
             'hotkeys': self._hotkeys_config,
->>>>>>> 91fe57d08aa7be9285aab0d836be01c8eb3f8804
             'proxy_url': self.proxy_url,
             'proxy_key': self.proxy_key,
             'claude_api_key': self._claude_api_key,
